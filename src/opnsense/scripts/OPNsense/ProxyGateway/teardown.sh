@@ -58,6 +58,6 @@ rm -f "${RUNDIR}/${NAME}.tundev"
 rm -f "${RUNDIR}/${NAME}.status"
 
 # Step 5: Trigger OPNsense route reconfiguration
-/usr/local/sbin/configctl interface routes reconfigure 2>/dev/null || true
+/usr/local/sbin/configctl interface routes reconfigure >/dev/null 2>&1 || true
 
 echo "=== Proxy gateway '$NAME' is DOWN ==="

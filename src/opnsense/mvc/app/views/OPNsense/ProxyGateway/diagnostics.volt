@@ -99,6 +99,9 @@
                         if (conn.status === 'up') {
                             statusIcon = '<span class="fa fa-fw fa-check-circle text-success"></span>';
                             statusText = 'Online';
+                        } else if (conn.status === 'degraded') {
+                            statusIcon = '<span class="fa fa-fw fa-exclamation-circle text-warning"></span>';
+                            statusText = 'Unreachable';
                         } else if (conn.status === 'down') {
                             statusIcon = '<span class="fa fa-fw fa-times-circle text-danger"></span>';
                             statusText = 'Down';
@@ -120,7 +123,7 @@
                             : '-';
 
                         var actions = '';
-                        if (conn.status === 'up' || conn.status === 'down') {
+                        if (conn.status === 'up' || conn.status === 'down' || conn.status === 'degraded') {
                             actions = '<button class="btn btn-xs btn-default btn-test" data-name="' + conn.name + '">' +
                                 '<span class="fa fa-fw fa-heartbeat"></span> Test</button>';
                         } else if (conn.status === 'not_running') {
