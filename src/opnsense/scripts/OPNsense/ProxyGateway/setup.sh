@@ -200,7 +200,7 @@ fi
 # Step 3: Write router file for OPNsense gateway auto-detection
 echo "$TUN_PEER" > "/tmp/${IFACE}_router"
 
-# Step 4: Save connection config for status/teardown
+# Step 4: Save connection config for status/teardown/healthcheck
 cat > "$CONFFILE" <<EOF
 NAME="${NAME}"
 IFACE="${IFACE}"
@@ -208,6 +208,7 @@ TUN_DEV="${TUN_DEV}"
 PROXY_TYPE="${PROXY_TYPE}"
 PROXY_ADDR="${PROXY_ADDR}"
 PROXY_PORT="${PROXY_PORT}"
+PROXY_URL="${PROXY_URL}"
 TUN_LOCAL="${TUN_LOCAL}"
 TUN_PEER="${TUN_PEER}"
 TUN_MTU="${TUN_MTU}"
