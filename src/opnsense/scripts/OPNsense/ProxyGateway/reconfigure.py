@@ -86,9 +86,14 @@ def run_setup(conn):
         conn.get("proxyPort", "1080"),
     ]
 
+    # Prepare environment variables for secure credential passing
+    env = os.environ.copy()
+
     if conn.get("authEnabled") == "1" and conn.get("authUser"):
         cmd.extend(["--auth-user", conn["authUser"]])
-        cmd.extend(["--auth-pass", conn.get("authPass", "")])
+        # Pass password via environment variable instead of command line
+        cmd.append("--auth-pass-env")
+        env["PROXY_AUTH_PASS"] = conn.get("authPass", "")
 
     if conn.get("tunAddress"):
         cmd.extend(["--tun-addr", conn["tunAddress"]])
@@ -106,20 +111,8 @@ def run_setup(conn):
         cmd.extend(["--loglevel", conn["logLevel"]])
 
     log.info("Starting connection: %s", conn["name"])
-    # Build a redacted version for display (hide password)
-    display_cmd = []
-    skip_next = False
-    for arg in cmd:
-        if skip_next:
-            display_cmd.append("***")
-            skip_next = False
-        elif arg == "--auth-pass":
-            display_cmd.append(arg)
-            skip_next = True
-        else:
-            display_cmd.append(arg)
-    print(f"  Command: {' '.join(display_cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    print(f"  Command: {' '.join(cmd)}")  # Safe to print now - no password in args
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
     # Always print stdout (contains setup.sh progress messages)
     if result.stdout:
         print(result.stdout.rstrip())

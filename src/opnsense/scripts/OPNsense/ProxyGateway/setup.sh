@@ -53,6 +53,10 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --auth-user)  AUTH_USER="$2"; shift 2 ;;
         --auth-pass)  AUTH_PASS="$2"; shift 2 ;;
+        --auth-pass-env)
+            # Read password from environment variable for security
+            AUTH_PASS="${PROXY_AUTH_PASS}"
+            shift 1 ;;
         --tun-addr)   TUN_ADDR="$2"; shift 2 ;;
         --tun-mtu)    TUN_MTU="$2"; shift 2 ;;
         --dns-mode)   DNS_MODE="$2"; shift 2 ;;
@@ -204,10 +208,14 @@ if ! kill -0 "$T2S_PID" 2>/dev/null; then
 fi
 
 # Step 3: Write router file for OPNsense gateway auto-detection
-echo "$TUN_PEER" > "/tmp/${IFACE}_router"
-log_debug "Wrote router file: /tmp/${IFACE}_router -> ${TUN_PEER}"
+# Use /var/run instead of /tmp for security (symlink attack prevention)
+ROUTER_FILE="/var/run/${IFACE}_router"
+echo "$TUN_PEER" > "$ROUTER_FILE"
+chmod 644 "$ROUTER_FILE"  # This file needs to be readable by OPNsense gateway detection
+log_debug "Wrote router file: ${ROUTER_FILE} -> ${TUN_PEER}"
 
 # Step 4: Save connection config for status/teardown/healthcheck
+# Note: PROXY_URL contains credentials, so secure this file
 cat > "$CONFFILE" <<EOF
 NAME="${NAME}"
 IFACE="${IFACE}"
@@ -223,7 +231,13 @@ DNS_MODE="${DNS_MODE}"
 DNS_SERVER="${DNS_SERVER}"
 PID="${T2S_PID}"
 EOF
-log_debug "Saved connection config to ${CONFFILE}"
+# Secure file permissions: owner (root) read/write only
+chmod 600 "$CONFFILE"
+chown root:wheel "$CONFFILE"
+log_debug "Saved connection config to ${CONFFILE} (secure permissions)"
+
+# Also secure the tundev file
+chmod 600 "$TUNDEVFILE" 2>/dev/null || true
 
 # Step 5: Trigger OPNsense route reconfiguration
 /usr/local/sbin/configctl interface routes reconfigure >/dev/null 2>&1 || true

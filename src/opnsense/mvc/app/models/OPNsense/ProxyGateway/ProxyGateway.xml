@@ -53,8 +53,8 @@
 
                 <proxyServer type="TextField">
                     <Required>Y</Required>
-                    <Mask>/^[a-zA-Z0-9.\-:]+$/</Mask>
-                    <ValidationMessage>Enter a valid hostname or IP address</ValidationMessage>
+                    <Mask>/^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$|^([0-9]{1,3}\.){3}[0-9]{1,3}$|^\[([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\]$/</Mask>
+                    <ValidationMessage>Enter a valid hostname or IP address (IPv4/IPv6)</ValidationMessage>
                 </proxyServer>
 
                 <proxyPort type="IntegerField">
@@ -70,10 +70,14 @@
 
                 <authUser type="TextField">
                     <Required>N</Required>
+                    <Mask>/^[a-zA-Z0-9@._\-]{1,64}$/</Mask>
+                    <ValidationMessage>Username must be 1-64 characters (alphanumeric, @, ., _, -)</ValidationMessage>
                 </authUser>
 
                 <authPass type="TextField">
                     <Required>N</Required>
+                    <Mask>/^[\x20-\x7E]{1,128}$/</Mask>
+                    <ValidationMessage>Password must be 1-128 printable ASCII characters</ValidationMessage>
                 </authPass>
 
                 <!-- Local tunnel settings -->
