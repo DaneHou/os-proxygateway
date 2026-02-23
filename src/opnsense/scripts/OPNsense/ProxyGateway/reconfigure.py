@@ -106,7 +106,19 @@ def run_setup(conn):
         cmd.extend(["--loglevel", conn["logLevel"]])
 
     log.info("Starting connection: %s", conn["name"])
-    print(f"  Command: {' '.join(cmd)}")
+    # Build a redacted version for display (hide password)
+    display_cmd = []
+    skip_next = False
+    for arg in cmd:
+        if skip_next:
+            display_cmd.append("***")
+            skip_next = False
+        elif arg == "--auth-pass":
+            display_cmd.append(arg)
+            skip_next = True
+        else:
+            display_cmd.append(arg)
+    print(f"  Command: {' '.join(display_cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     # Always print stdout (contains setup.sh progress messages)
     if result.stdout:
