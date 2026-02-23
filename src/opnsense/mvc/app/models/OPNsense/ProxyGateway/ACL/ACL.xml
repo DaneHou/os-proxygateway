@@ -11,7 +11,7 @@
     <page-services-proxygateway-diagnostics>
         <name>Services: Proxy Gateway: Diagnostics</name>
         <patterns>
-            <pattern>ui/proxygateway/diagnostics/*</pattern>
+            <pattern>ui/proxygateway/diagnostics*</pattern>
             <pattern>api/proxygateway/diagnostics/*</pattern>
             <pattern>api/proxygateway/service/*</pattern>
         </patterns>
