@@ -129,16 +129,14 @@ class DiagnosticsController extends ApiControllerBase
         $lines = (int)$this->request->get('lines', 'int', 50);
         $lines = min(max($lines, 10), 500);
 
-        if (!empty($name)) {
+        if ($name === 'reconfigure') {
+            $logFile = "/var/log/proxygateway/reconfigure.log";
+        } elseif (!empty($name)) {
             $logFile = "/var/log/proxygateway/{$name}.log";
         } else {
-            // Aggregate all logs
             $logFile = "/var/log/proxygateway/*.log";
         }
 
-        $backend = new \OPNsense\Core\Backend();
-
-        // Use tail to get recent log lines
         if (!empty($name)) {
             $cmd = sprintf('tail -n %d %s 2>/dev/null', $lines, escapeshellarg($logFile));
         } else {
@@ -153,5 +151,87 @@ class DiagnosticsController extends ApiControllerBase
             'name'   => $name ?: 'all',
             'lines'  => $output,
         ];
+    }
+
+    /**
+     * System check — verify prerequisites for the proxy gateway.
+     * @return array check results
+     */
+    public function getSystemCheckAction()
+    {
+        $checks = [];
+
+        // Check tun2socks binary
+        $tun2socks = '/usr/local/bin/tun2socks';
+        $checks['tun2socks'] = [
+            'label'  => 'tun2socks binary',
+            'path'   => $tun2socks,
+            'exists' => file_exists($tun2socks),
+            'executable' => is_executable($tun2socks),
+        ];
+        if (is_executable($tun2socks)) {
+            $version = trim(shell_exec($tun2socks . ' --version 2>&1') ?? '');
+            $checks['tun2socks']['version'] = $version;
+        }
+
+        // Check runtime directories
+        $checks['rundir'] = [
+            'label'  => 'Runtime directory',
+            'path'   => '/var/run/proxygateway',
+            'exists' => is_dir('/var/run/proxygateway'),
+        ];
+        $checks['logdir'] = [
+            'label'  => 'Log directory',
+            'path'   => '/var/log/proxygateway',
+            'exists' => is_dir('/var/log/proxygateway'),
+        ];
+
+        // Check desired.json
+        $desiredPath = '/var/run/proxygateway/desired.json';
+        $desiredExists = file_exists($desiredPath);
+        $checks['desired_config'] = [
+            'label'  => 'Desired config (desired.json)',
+            'path'   => $desiredPath,
+            'exists' => $desiredExists,
+        ];
+        if ($desiredExists) {
+            $json = json_decode(file_get_contents($desiredPath), true);
+            $checks['desired_config']['connections'] = count($json['connections'] ?? []);
+            $enabled = 0;
+            foreach ($json['connections'] ?? [] as $c) {
+                if (($c['enabled'] ?? '0') === '1') {
+                    $enabled++;
+                }
+            }
+            $checks['desired_config']['enabled'] = $enabled;
+        }
+
+        // Check plugin enabled
+        $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
+        $checks['plugin_enabled'] = [
+            'label'  => 'Plugin globally enabled',
+            'value'  => (string)$mdl->general->enabled === '1',
+        ];
+
+        // Last reconfigure log
+        $reconfigLog = '/var/log/proxygateway/reconfigure.log';
+        $lastReconfigure = '';
+        if (file_exists($reconfigLog)) {
+            $lastReconfigure = trim(shell_exec("tail -n 50 " . escapeshellarg($reconfigLog) . " 2>/dev/null") ?? '');
+        }
+        $checks['last_reconfigure'] = [
+            'label'  => 'Last reconfigure output',
+            'log'    => $lastReconfigure,
+        ];
+
+        // Check configd actions registered
+        $backend = new \OPNsense\Core\Backend();
+        $actionsResponse = trim($backend->configdRun('proxygateway status') ?? '');
+        $checks['configd_actions'] = [
+            'label'      => 'configd status action',
+            'responsive' => !empty($actionsResponse),
+        ];
+
+        return ['status' => 'ok', 'checks' => $checks];
     }
 }

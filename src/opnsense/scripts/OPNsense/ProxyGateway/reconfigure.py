@@ -66,11 +66,15 @@ def run_setup(conn):
         cmd.extend(["--loglevel", conn["logLevel"]])
 
     print(f"Starting connection: {conn['name']}")
+    print(f"  Command: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
+    # Always print stdout (contains setup.sh progress messages)
+    if result.stdout:
+        print(result.stdout.rstrip())
     if result.returncode != 0:
-        print(f"ERROR starting {conn['name']}: {result.stderr}")
-    else:
-        print(result.stdout)
+        print(f"ERROR starting {conn['name']} (exit code {result.returncode})")
+        if result.stderr:
+            print(f"STDERR: {result.stderr.rstrip()}")
     return result.returncode
 
 
@@ -81,10 +85,12 @@ def run_teardown(name):
         ["/bin/sh", TEARDOWN_SCRIPT, name],
         capture_output=True, text=True
     )
+    if result.stdout:
+        print(result.stdout.rstrip())
     if result.returncode != 0:
-        print(f"ERROR stopping {name}: {result.stderr}")
-    else:
-        print(result.stdout)
+        print(f"ERROR stopping {name} (exit code {result.returncode})")
+        if result.stderr:
+            print(f"STDERR: {result.stderr.rstrip()}")
     return result.returncode
 
 
@@ -111,14 +117,32 @@ def main():
     with open(config_path) as f:
         desired_config = json.load(f)
 
+    # Pre-flight checks
+    tun2socks = "/usr/local/bin/tun2socks"
+    if not os.path.isfile(tun2socks):
+        print(f"ERROR: tun2socks binary not found at {tun2socks}")
+        print("Install it with: make install-tun2socks")
+        sys.exit(1)
+    if not os.access(tun2socks, os.X_OK):
+        print(f"ERROR: tun2socks binary is not executable: {tun2socks}")
+        sys.exit(1)
+
     # Get desired connections (only enabled ones)
     desired = {}
-    for conn in desired_config.get("connections", []):
+    all_conns = desired_config.get("connections", [])
+    for conn in all_conns:
         if conn.get("enabled", "0") == "1":
             desired[conn["name"]] = conn
 
+    print(f"Desired config: {len(all_conns)} total, {len(desired)} enabled")
+    for name, conn in desired.items():
+        print(f"  {name}: {conn.get('proxyType', '?')}://{conn.get('proxyServer', '?')}:{conn.get('proxyPort', '?')}")
+
     # Get running connections
     running = get_running_connections()
+    print(f"Running connections: {len(running)}")
+    for name in running:
+        print(f"  {name}")
 
     # Determine actions
     to_stop = set(running.keys()) - set(desired.keys())
