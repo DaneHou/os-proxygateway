@@ -170,6 +170,7 @@ function proxygateway_firewall(\OPNsense\Firewall\Plugin $fw)
         $ifname = "pgw_{$name}";
         $proxyAddr = (string)$conn->proxyServer;
         $proxyPort = (string)$conn->proxyPort;
+        $proxyInterface = !empty((string)$conn->proxyInterface) ? (string)$conn->proxyInterface : 'wan';
 
         // Outbound NAT on the tunnel interface
         $fw->registerNatRule(
@@ -189,7 +190,7 @@ function proxygateway_firewall(\OPNsense\Firewall\Plugin $fw)
         $fw->registerFilterRule(
             500,
             [
-                'interface'   => 'wan',
+                'interface'   => $proxyInterface,
                 'descr'       => "ProxyGW {$name}: Allow proxy connection",
                 'type'        => 'pass',
                 'direction'   => 'out',

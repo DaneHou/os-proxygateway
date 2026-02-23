@@ -94,6 +94,7 @@ make uninstall
 | **Enabled** | Activate this connection | ✓ |
 | **Name** | Alphanumeric identifier (max 16 chars) | `vpn1` |
 | **Description** | Friendly name | `US East Proxy` |
+| **Proxy Server Interface** | OPNsense interface the proxy is reachable through (default: `wan`). Set to the LAN interface name if the proxy is on a local network (e.g., `opt1` for a Tailscale proxy on LAN2). Find the name under **Interfaces → Assignments** | `wan` |
 | **Proxy Type** | Protocol | SOCKS5 / HTTP / HTTPS |
 | **Proxy Server** | IP or hostname of the proxy | `203.0.113.10` |
 | **Proxy Port** | Port number | `1080` |
@@ -209,6 +210,74 @@ OPNsense routes between them. You want LAN2 traffic to go through the proxy.
 
 **Important**: OPNsense must be the default gateway for devices on LAN2 for this
 to work. If devices on LAN2 use a different gateway, OPNsense never sees their traffic.
+
+### Route an Isolated IoT LAN Through a LAN-side Proxy (e.g., Tailscale SOCKS5)
+
+**Scenario**: You have two LAN segments — LAN2 (`10.0.2.0/24`, your main network) and
+LAN3 (`10.0.3.0/24`, IoT devices). A firewall rule blocks LAN3 from directly accessing
+LAN2. You are running a Tailscale SOCKS5 proxy on a device in LAN2 (e.g., at
+`10.0.2.10:1055`) and want a specific IoT device (e.g., `10.0.3.50`) to reach the
+Tailscale network through that proxy — without opening LAN3 → LAN2 directly.
+
+Because the proxy server is on LAN2 (not on the internet via WAN), you must tell the
+plugin which OPNsense interface is used to reach the proxy. This sets the correct
+anti-routing-loop firewall rule.
+
+#### Step 1: Find the OPNsense internal interface name for LAN2
+
+Go to **Interfaces → Assignments**. Find the row for your LAN2 interface and note the
+name shown in the **Interface** column (e.g., `opt1`, `lan`, `opt2`). This is the
+internal name you will use below.
+
+#### Step 2: Add a proxy connection
+
+1. Go to **Services → Proxy Gateway → Connections**
+2. Click **+** and fill in:
+
+| Field | Value |
+|-------|-------|
+| **Enabled** | ✓ |
+| **Name** | `tailscale` |
+| **Description** | `Tailscale via LAN2` |
+| **Proxy Server Interface** | The internal name for LAN2 (e.g., `opt1`) |
+| **Proxy Type** | SOCKS5 |
+| **Proxy Server** | `10.0.2.10` (IP of the Tailscale SOCKS5 proxy on LAN2) |
+| **Proxy Port** | `1055` (or whichever port Tailscale's SOCKS5 proxy uses) |
+| **DNS Mode** | `tunnel` (routes DNS through the Tailscale network) |
+| **Kill Switch** | ✓ (optional — drops traffic if the tunnel goes down) |
+
+3. Click **Save**, then **Apply**.
+
+#### Step 3: Add a firewall rule on LAN3
+
+1. Go to **Firewall → Rules → [LAN3 interface]**
+2. Add a rule **above** any existing LAN3 → LAN2 block rules:
+
+| Setting | Value |
+|---------|-------|
+| Action | Pass |
+| Interface | LAN3 |
+| Direction | in |
+| Source | Single host: `10.0.3.50` (your IoT device) |
+| Destination | any |
+| Gateway | `PROXYGW_TAILSCALE` |
+
+3. Save and Apply.
+
+Traffic from `10.0.3.50` now routes through the Tailscale SOCKS5 proxy on LAN2.
+The IoT device has no direct access to LAN2 — the only path is through the proxy.
+
+#### Verify the configuration
+
+- Go to **Services → Proxy Gateway → Diagnostics** and confirm the `tailscale`
+  connection shows **Online**.
+- From the IoT device, check your exit IP (e.g., `curl https://ifconfig.me`) — it
+  should match the Tailscale exit node, not your WAN IP.
+- Confirm the existing LAN3 → LAN2 block rules are still in place and that direct
+  access is still blocked.
+
+**Important**: OPNsense must be the default gateway for the IoT device (LAN3) for this
+to work. If the device uses another gateway, OPNsense never sees its traffic.
 
 ---
 
