@@ -73,9 +73,15 @@ install-plugin:
 
 	# Backend scripts
 	@mkdir -p $(SCRIPTS_DIR)
+	@mkdir -p $(SCRIPTS_DIR)/lib
 	@cp src/opnsense/scripts/OPNsense/ProxyGateway/*.sh $(SCRIPTS_DIR)/
 	@cp src/opnsense/scripts/OPNsense/ProxyGateway/*.py $(SCRIPTS_DIR)/
+	@cp src/opnsense/scripts/OPNsense/ProxyGateway/lib/*.sh $(SCRIPTS_DIR)/lib/
 	@chmod +x $(SCRIPTS_DIR)/*.sh $(SCRIPTS_DIR)/*.py
+
+	# Log rotation
+	@mkdir -p $(DESTDIR)/etc/newsyslog.conf.d
+	@cp src/etc/newsyslog.conf.d/proxygateway.conf $(DESTDIR)/etc/newsyslog.conf.d/
 
 	# configd actions
 	@mkdir -p $(ACTIONS_DIR)
@@ -140,6 +146,7 @@ uninstall:
 	@rm -f $(ACTIONS_DIR)/actions_proxygateway.conf
 	@rm -f $(PLUGINS_DIR)/proxygateway.inc
 	@rm -f $(RCD_DIR)/opnsense-proxygateway
+	@rm -f $(DESTDIR)/etc/newsyslog.conf.d/proxygateway.conf
 	@rm -rf /var/run/proxygateway
 	@rm -f /tmp/opnsense_menu_cache.xml 2>/dev/null || true
 	@rm -f $(DESTDIR)$(PREFIX)/opnsense/mvc/app/cache/*.php 2>/dev/null || true
