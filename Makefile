@@ -107,9 +107,14 @@ install-tun2socks:
 activate:
 	@echo ">>> Activating plugin..."
 	@sysrc proxygateway_enable=YES 2>/dev/null || true
-	@$(PREFIX)/sbin/configctl configd actions 2>/dev/null || true
+	# Flush Volt template cache so new pages render correctly
+	@rm -f $(DESTDIR)$(PREFIX)/opnsense/mvc/app/cache/*.php 2>/dev/null || true
+	# Restart configd to pick up new actions
+	@service configd restart 2>/dev/null || true
 	@$(PREFIX)/sbin/configctl interface invoke registration 2>/dev/null || true
-	@echo ">>> Plugin activated."
+	# Restart web GUI to pick up new menu items and controllers
+	@service php-fpm restart 2>/dev/null || true
+	@echo ">>> Plugin activated. Refresh your browser to see the menu."
 
 uninstall:
 	@echo ">>> Stopping service..."

@@ -4,6 +4,7 @@
         <patterns>
             <pattern>ui/proxygateway/*</pattern>
             <pattern>api/proxygateway/connection/*</pattern>
+            <pattern>api/proxygateway/settings/*</pattern>
             <pattern>api/proxygateway/service/*</pattern>
         </patterns>
     </page-services-proxygateway>

@@ -6,7 +6,7 @@
 <script>
     $( document ).ready(function() {
         // Load general settings
-        mapDataToFormUI({'frm_GeneralSettings': "/api/proxygateway/connection/getItem"}).done(function(){
+        mapDataToFormUI({'frm_GeneralSettings': "/api/proxygateway/settings/get"}).done(function(){
             formatTokenizersUI();
             $('.selectpicker').selectpicker('refresh');
         });
@@ -47,7 +47,7 @@
         $("#reconfigureAct").SimpleActionButton({
             onPreAction: function() {
                 const dfObj = new $.Deferred();
-                saveFormToEndpoint("/api/proxygateway/connection/setItem", 'frm_GeneralSettings',
+                saveFormToEndpoint("/api/proxygateway/settings/set", 'frm_GeneralSettings',
                     function() { dfObj.resolve(); },
                     true,
                     function() { dfObj.reject(); }
