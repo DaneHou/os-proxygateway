@@ -100,9 +100,9 @@ class DiagnosticsController extends ApiControllerBase
         $result = ['status' => 'failed'];
 
         if ($this->request->isPost()) {
-            $name = $this->request->getPost('name', 'alphanum', '');
+            $name = $this->request->getPost('name');
 
-            if (empty($name)) {
+            if (empty($name) || !preg_match('/^[a-zA-Z0-9_-]{1,16}$/', $name)) {
                 return ['status' => 'failed', 'message' => 'Connection name is required'];
             }
 
@@ -125,8 +125,11 @@ class DiagnosticsController extends ApiControllerBase
      */
     public function getLogsAction()
     {
-        $name = $this->request->get('name', 'alphanum', '');
-        $lines = (int)$this->request->get('lines', 'int', 50);
+        $name = $this->request->get('name', null, '');
+        if (!empty($name) && !preg_match('/^[a-zA-Z0-9_-]{1,16}$/', $name)) {
+            return ['status' => 'failed', 'message' => 'Invalid connection name'];
+        }
+        $lines = (int)$this->request->get('lines', null, 50);
         $lines = min(max($lines, 10), 500);
 
         if ($name === 'reconfigure') {
