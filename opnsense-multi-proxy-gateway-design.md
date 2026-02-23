@@ -483,7 +483,7 @@ Optional per-connection setting: if the proxy tunnel is DOWN, **drop** all traff
 
 | Dependency | Version | Purpose | License |
 |---|---|---|---|
-| `tun2socks` | v2.x (Go) | Core tunneling engine | GPL-3.0 |
+| `tun2socks` | v2.6.x (Go) | Core tunneling engine | MIT (changed from GPL-3.0 in v2.6.0) |
 | `dpinger` | (bundled) | Gateway health monitoring | BSD |
 | OPNsense | 24.x+ | Base platform | BSD-2 |
 | FreeBSD | 14.x+ | OS (tun device support) | BSD |
