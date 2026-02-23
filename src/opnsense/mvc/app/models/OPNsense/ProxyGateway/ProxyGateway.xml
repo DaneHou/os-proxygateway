@@ -1,0 +1,137 @@
+<model>
+    <mount>//OPNsense/ProxyGateway</mount>
+    <version>0.1.0</version>
+    <description>Multi-Proxy Gateway Configuration</description>
+
+    <items>
+        <!-- Global settings -->
+        <general>
+            <enabled type="BooleanField">
+                <default>0</default>
+                <Required>Y</Required>
+            </enabled>
+            <logLevel type="OptionField">
+                <default>warning</default>
+                <BlankDesc>Warning</BlankDesc>
+                <OptionValues>
+                    <debug>Debug</debug>
+                    <info>Info</info>
+                    <warning>Warning</warning>
+                    <error>Error</error>
+                </OptionValues>
+            </logLevel>
+        </general>
+
+        <!-- Proxy connections (multiple) -->
+        <connections>
+            <connection type="ArrayField">
+                <enabled type="BooleanField">
+                    <default>1</default>
+                    <Required>Y</Required>
+                </enabled>
+
+                <name type="TextField">
+                    <Required>Y</Required>
+                    <Mask>/^[a-zA-Z0-9_]{1,16}$/</Mask>
+                    <ValidationMessage>Name must be 1-16 alphanumeric characters or underscores</ValidationMessage>
+                </name>
+
+                <description type="TextField">
+                    <Required>N</Required>
+                </description>
+
+                <!-- Upstream proxy settings -->
+                <proxyType type="OptionField">
+                    <default>socks5</default>
+                    <Required>Y</Required>
+                    <OptionValues>
+                        <socks5>SOCKS5</socks5>
+                        <socks5tls>SOCKS5 + TLS</socks5tls>
+                        <http>HTTP CONNECT</http>
+                        <https>HTTPS CONNECT</https>
+                    </OptionValues>
+                </proxyType>
+
+                <proxyServer type="TextField">
+                    <Required>Y</Required>
+                    <Mask>/^[a-zA-Z0-9.\-:]+$/</Mask>
+                    <ValidationMessage>Enter a valid hostname or IP address</ValidationMessage>
+                </proxyServer>
+
+                <proxyPort type="IntegerField">
+                    <Required>Y</Required>
+                    <default>1080</default>
+                    <MinimumValue>1</MinimumValue>
+                    <MaximumValue>65535</MaximumValue>
+                </proxyPort>
+
+                <authEnabled type="BooleanField">
+                    <default>0</default>
+                </authEnabled>
+
+                <authUser type="TextField">
+                    <Required>N</Required>
+                </authUser>
+
+                <authPass type="TextField">
+                    <Required>N</Required>
+                </authPass>
+
+                <!-- Local tunnel settings -->
+                <tunAddress type="TextField">
+                    <Required>N</Required>
+                    <Mask>/^([0-9]{1,3}\.){3}[0-9]{1,3}$/</Mask>
+                    <ValidationMessage>Enter a valid IPv4 address (leave empty for auto-assign)</ValidationMessage>
+                </tunAddress>
+
+                <tunMTU type="IntegerField">
+                    <default>1500</default>
+                    <MinimumValue>1280</MinimumValue>
+                    <MaximumValue>9000</MaximumValue>
+                </tunMTU>
+
+                <!-- DNS settings -->
+                <dnsMode type="OptionField">
+                    <default>tunnel</default>
+                    <OptionValues>
+                        <tunnel>Route through tunnel</tunnel>
+                        <custom>Custom DNS server</custom>
+                    </OptionValues>
+                </dnsMode>
+
+                <dnsServer type="TextField">
+                    <Required>N</Required>
+                    <Mask>/^([0-9]{1,3}\.){3}[0-9]{1,3}$/</Mask>
+                    <ValidationMessage>Enter a valid IPv4 address for DNS</ValidationMessage>
+                </dnsServer>
+
+                <!-- Health check -->
+                <healthCheckEnabled type="BooleanField">
+                    <default>1</default>
+                </healthCheckEnabled>
+
+                <healthCheckInterval type="IntegerField">
+                    <default>30</default>
+                    <MinimumValue>5</MinimumValue>
+                    <MaximumValue>3600</MaximumValue>
+                </healthCheckInterval>
+
+                <healthCheckTarget type="TextField">
+                    <default>http://cp.cloudflare.com</default>
+                    <Required>N</Required>
+                </healthCheckTarget>
+
+                <!-- Gateway settings -->
+                <gatewayPriority type="IntegerField">
+                    <default>255</default>
+                    <MinimumValue>1</MinimumValue>
+                    <MaximumValue>255</MaximumValue>
+                </gatewayPriority>
+
+                <killSwitch type="BooleanField">
+                    <default>0</default>
+                </killSwitch>
+            </connection>
+        </connections>
+    </items>
+</model>

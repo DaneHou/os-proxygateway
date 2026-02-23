@@ -1,0 +1,68 @@
+#!/bin/sh
+
+# PROVIDE: proxygateway
+# REQUIRE: NETWORKING SERVERS
+# KEYWORD: shutdown
+#
+# rc.d service script for os-proxygateway.
+# Manages all proxy gateway connections defined in the OPNsense model.
+
+. /etc/rc.subr
+
+name="proxygateway"
+rcvar="proxygateway_enable"
+
+load_rc_config $name
+
+: ${proxygateway_enable:="NO"}
+
+RUNDIR="/var/run/proxygateway"
+SCRIPT_DIR="/usr/local/opnsense/scripts/OPNsense/ProxyGateway"
+
+pidfile="${RUNDIR}/master.pid"
+
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+restart_cmd="${name}_restart"
+status_cmd="${name}_status"
+extra_commands="status"
+
+proxygateway_start()
+{
+    echo "Starting ${name}."
+    mkdir -p "$RUNDIR"
+
+    # Write master PID (this rc.d script's PID, for service management)
+    echo $$ > "$pidfile"
+
+    # Generate desired config from model and trigger reconfigure
+    /usr/local/sbin/configctl proxygateway reconfigure
+}
+
+proxygateway_stop()
+{
+    echo "Stopping ${name}."
+
+    # Teardown all running connections
+    for conf in "${RUNDIR}"/*.conf; do
+        [ -f "$conf" ] || continue
+        conn_name=$(basename "$conf" .conf)
+        /bin/sh "${SCRIPT_DIR}/teardown.sh" "$conn_name"
+    done
+
+    rm -f "$pidfile"
+}
+
+proxygateway_restart()
+{
+    proxygateway_stop
+    sleep 1
+    proxygateway_start
+}
+
+proxygateway_status()
+{
+    /usr/local/bin/python3 "${SCRIPT_DIR}/status.py"
+}
+
+run_rc_command "$1"
