@@ -86,17 +86,18 @@ class DiagnosticsController extends ApiControllerBase
         if (!empty($name)) {
             $logFile = "/var/log/proxygateway/{$name}.log";
         } else {
-            // Aggregate all logs
+            // Aggregate all logs — merge and sort by timestamp
             $logFile = "/var/log/proxygateway/*.log";
         }
 
-        $backend = new \OPNsense\Core\Backend();
-
-        // Use tail to get recent log lines
+        // Use tail to get recent log lines; for multiple files, sort by timestamp
         if (!empty($name)) {
             $cmd = sprintf('tail -n %d %s 2>/dev/null', $lines, escapeshellarg($logFile));
         } else {
-            $cmd = sprintf('tail -n %d /var/log/proxygateway/*.log 2>/dev/null', $lines);
+            $cmd = sprintf(
+                'cat /var/log/proxygateway/*.log 2>/dev/null | sort | tail -n %d',
+                $lines
+            );
         }
 
         $output = [];
@@ -107,5 +108,48 @@ class DiagnosticsController extends ApiControllerBase
             'name'   => $name ?: 'all',
             'lines'  => $output,
         ];
+    }
+
+    /**
+     * Get list of available connection log names.
+     * @return array connection names that have log files
+     */
+    public function getLogConnectionsAction()
+    {
+        $connections = [];
+        $logDir = '/var/log/proxygateway';
+
+        if (is_dir($logDir)) {
+            foreach (glob("{$logDir}/*.log") as $logFile) {
+                $name = basename($logFile, '.log');
+                $connections[] = $name;
+            }
+            sort($connections);
+        }
+
+        return ['status' => 'ok', 'connections' => $connections];
+    }
+
+    /**
+     * Clear logs for a specific connection or all connections.
+     * @return array result
+     */
+    public function clearLogsAction()
+    {
+        $result = ['status' => 'failed'];
+
+        if ($this->request->isPost()) {
+            $name = $this->request->getPost('name', 'alphanum', '');
+
+            $backend = new \OPNsense\Core\Backend();
+            $response = trim($backend->configdRun("proxygateway clearlogs {$name}"));
+
+            $result = [
+                'status'  => 'ok',
+                'message' => $response,
+            ];
+        }
+
+        return $result;
     }
 }

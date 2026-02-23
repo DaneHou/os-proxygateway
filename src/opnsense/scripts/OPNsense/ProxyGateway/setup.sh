@@ -13,6 +13,9 @@ RUNDIR="/var/run/proxygateway"
 LOGDIR="/var/log/proxygateway"
 TUN2SOCKS="/usr/local/bin/tun2socks"
 
+# Source structured logging library
+. "${SCRIPT_DIR}/lib/logging.sh"
+
 usage() {
     echo "Usage: $0 <name> <proxy_type> <proxy_addr> <proxy_port> [options]"
     echo ""
@@ -73,15 +76,19 @@ CONFFILE="${RUNDIR}/${NAME}.conf"
 # Ensure directories exist
 mkdir -p "$RUNDIR" "$LOGDIR"
 
+# Initialize structured logging
+log_init "setup" "$NAME" "$LOGLEVEL"
+log_set_file "$LOGFILE"
+
 # Check if already running
 if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-    echo "ERROR: Connection '$NAME' is already running (PID: $(cat "$PIDFILE"))"
+    log_error "Connection already running (PID: $(cat "$PIDFILE"))"
     exit 1
 fi
 
 # Check tun2socks binary
 if [ ! -x "$TUN2SOCKS" ]; then
-    echo "ERROR: tun2socks binary not found at $TUN2SOCKS"
+    log_error "tun2socks binary not found at $TUN2SOCKS"
     exit 1
 fi
 
@@ -110,7 +117,7 @@ case "$PROXY_TYPE" in
     socks5tls) PROXY_URL="socks5://" ;;  # TLS handled via tun2socks flag
     http)      PROXY_URL="http://" ;;
     https)     PROXY_URL="http://" ;;     # TLS handled via tun2socks flag
-    *)         echo "ERROR: Unknown proxy type: $PROXY_TYPE"; exit 1 ;;
+    *)         log_error "Unknown proxy type: $PROXY_TYPE"; exit 1 ;;
 esac
 
 if [ -n "$AUTH_USER" ] && [ -n "$AUTH_PASS" ]; then
@@ -118,18 +125,20 @@ if [ -n "$AUTH_USER" ] && [ -n "$AUTH_PASS" ]; then
 fi
 PROXY_URL="${PROXY_URL}${PROXY_ADDR}:${PROXY_PORT}"
 
-echo "=== Setting up proxy gateway: $NAME ==="
-echo "Interface: $IFACE"
-echo "Tunnel: ${TUN_LOCAL} <-> ${TUN_PEER}"
-echo "Proxy: ${PROXY_TYPE}://${PROXY_ADDR}:${PROXY_PORT}"
+log_separator "BEGIN SETUP"
+log_info "Interface: $IFACE"
+log_info "Tunnel: ${TUN_LOCAL} <-> ${TUN_PEER} (MTU: ${TUN_MTU})"
+log_info "Proxy: ${PROXY_TYPE}://${PROXY_ADDR}:${PROXY_PORT}"
+log_info "DNS mode: ${DNS_MODE}${DNS_SERVER:+ (server: $DNS_SERVER)}"
 
 # Step 1: Create tun device
-echo "Creating tun device ${IFACE}..."
+log_info "Creating tun device ${IFACE}..."
 ifconfig "$IFACE" create 2>/dev/null || true
 ifconfig "$IFACE" inet "$TUN_LOCAL" "$TUN_PEER" mtu "$TUN_MTU" up
+log_debug "Device ${IFACE} configured: ${TUN_LOCAL}/${TUN_PEER}"
 
 # Step 2: Start tun2socks
-echo "Starting tun2socks..."
+log_info "Starting tun2socks (loglevel: ${LOGLEVEL})..."
 $TUN2SOCKS \
     -device "$IFACE" \
     -proxy "$PROXY_URL" \
@@ -138,11 +147,12 @@ $TUN2SOCKS \
 
 T2S_PID=$!
 echo "$T2S_PID" > "$PIDFILE"
+log_debug "tun2socks spawned with PID $T2S_PID"
 
 # Wait briefly and verify the process is still alive
 sleep 1
 if ! kill -0 "$T2S_PID" 2>/dev/null; then
-    echo "ERROR: tun2socks failed to start. Check ${LOGFILE}"
+    log_error "tun2socks failed to start — check ${LOGFILE} for details"
     rm -f "$PIDFILE"
     ifconfig "$IFACE" destroy 2>/dev/null || true
     exit 1
@@ -150,6 +160,7 @@ fi
 
 # Step 3: Write router file for OPNsense gateway auto-detection
 echo "$TUN_PEER" > "/tmp/${IFACE}_router"
+log_debug "Wrote router file: /tmp/${IFACE}_router -> ${TUN_PEER}"
 
 # Step 4: Save connection config for status/teardown
 cat > "$CONFFILE" <<EOF
@@ -165,11 +176,11 @@ DNS_MODE="${DNS_MODE}"
 DNS_SERVER="${DNS_SERVER}"
 PID="${T2S_PID}"
 EOF
+log_debug "Saved connection config to ${CONFFILE}"
 
 # Step 5: Trigger OPNsense route reconfiguration
 /usr/local/sbin/configctl interface routes reconfigure 2>/dev/null || true
+log_debug "Triggered route reconfiguration"
 
-echo "=== Proxy gateway '$NAME' is UP ==="
-echo "Gateway peer: $TUN_PEER"
-echo "PID: $T2S_PID"
-echo "Log: $LOGFILE"
+log_info "Gateway peer: $TUN_PEER | PID: $T2S_PID"
+log_separator "SETUP COMPLETE"
