@@ -105,8 +105,19 @@ function proxygateway_prepare($device)
         }
 
         if (!does_interface_exist($device)) {
-            mwexecf('/sbin/ifconfig tun create name %s', $device);
-            mwexecf('/sbin/ifconfig %s group proxygateway', $device);
+            // On FreeBSD, create a tun device via the tun cloner, then rename it.
+            // "ifconfig <custom_name> create" does NOT work for tun devices.
+            $tundev = trim(shell_exec('/sbin/ifconfig tun create 2>&1'));
+            if (!empty($tundev) && strpos($tundev, 'tun') === 0) {
+                mwexecf('/sbin/ifconfig %s name %s', [$tundev, $device]);
+                mwexecf('/sbin/ifconfig %s group proxygateway', $device);
+                // Save the original tun device name so tun2socks can open /dev/tunN
+                @mkdir('/var/run/proxygateway', 0750, true);
+                @file_put_contents(
+                    '/var/run/proxygateway/' . (string)$conn->name . '.tundev',
+                    $tundev
+                );
+            }
         }
 
         return $device;

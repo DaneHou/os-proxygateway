@@ -52,8 +52,10 @@ if ifconfig "$IFACE" >/dev/null 2>&1; then
     ifconfig "$IFACE" destroy
 fi
 
-# Step 4: Clean up config file
+# Step 4: Clean up config and device tracking files
 rm -f "$CONFFILE"
+rm -f "${RUNDIR}/${NAME}.tundev"
+rm -f "${RUNDIR}/${NAME}.status"
 
 # Step 5: Trigger OPNsense route reconfiguration
 /usr/local/sbin/configctl interface routes reconfigure 2>/dev/null || true

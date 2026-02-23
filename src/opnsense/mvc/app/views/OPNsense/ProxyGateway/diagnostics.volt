@@ -13,6 +13,20 @@
                 tbody.empty();
 
                 if (data.data && data.data.connections) {
+                    // Populate log filter dropdown with connection names
+                    var select = $('#log-filter-name');
+                    var currentVal = select.val();
+                    select.find('option:not(:first)').remove();
+                    $.each(data.data.connections, function(idx, conn) {
+                        if (select.find('option[value="' + conn.name + '"]').length === 0) {
+                            select.append('<option value="' + conn.name + '">' + conn.name + '</option>');
+                        }
+                    });
+                    select.val(currentVal);
+                    if (select.hasClass('selectpicker')) {
+                        select.selectpicker('refresh');
+                    }
+
                     $.each(data.data.connections, function(idx, conn) {
                         var statusIcon = conn.status === 'up'
                             ? '<span class="fa fa-fw fa-check-circle text-success"></span> Online'
@@ -42,7 +56,7 @@
                 }
 
                 if (!data.data || !data.data.connections || data.data.connections.length === 0) {
-                    tbody.append('<tr><td colspan="8" class="text-center text-muted">{{ lang._("No active connections") }}</td></tr>');
+                    tbody.append('<tr><td colspan="8" class="text-center text-muted">{{ lang._("No active connections. Enable the plugin and apply to start connections.") }}</td></tr>');
                 }
             });
         }

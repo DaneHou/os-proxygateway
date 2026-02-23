@@ -111,7 +111,7 @@
         <thead>
             <tr>
                 <th data-column-id="uuid" data-type="string" data-identifier="true" data-visible="false">ID</th>
-                <th data-column-id="enabled" data-width="5em" data-type="string" data-formatter="status">{{ lang._('Status') }}</th>
+                <th data-column-id="enabled" data-width="5em" data-type="string" data-formatter="status">{{ lang._('Enabled') }}</th>
                 <th data-column-id="name" data-type="string">{{ lang._('Name') }}</th>
                 <th data-column-id="description" data-type="string">{{ lang._('Description') }}</th>
                 <th data-column-id="proxyType" data-type="string" data-formatter="proxyInfo" data-visible="false">{{ lang._('Proxy') }}</th>

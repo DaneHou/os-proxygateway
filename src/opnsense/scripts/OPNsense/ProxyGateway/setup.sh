@@ -69,6 +69,7 @@ IFACE="pgw_${NAME}"
 PIDFILE="${RUNDIR}/${NAME}.pid"
 LOGFILE="${LOGDIR}/${NAME}.log"
 CONFFILE="${RUNDIR}/${NAME}.conf"
+TUNDEVFILE="${RUNDIR}/${NAME}.tundev"
 
 # Ensure directories exist
 mkdir -p "$RUNDIR" "$LOGDIR"
@@ -124,14 +125,53 @@ echo "Tunnel: ${TUN_LOCAL} <-> ${TUN_PEER}"
 echo "Proxy: ${PROXY_TYPE}://${PROXY_ADDR}:${PROXY_PORT}"
 
 # Step 1: Create tun device
-echo "Creating tun device ${IFACE}..."
-ifconfig "$IFACE" create 2>/dev/null || true
+# On FreeBSD, tun devices must be created via the tun cloner, then renamed.
+# "ifconfig <custom_name> create" does NOT work for tun devices.
+# We create a tunN device, rename it, and pass the original name to tun2socks
+# so it can open /dev/tunN (which still exists after renaming).
+TUN_DEV=""
+if ifconfig "$IFACE" >/dev/null 2>&1; then
+    echo "Interface $IFACE already exists"
+    # Read saved tun device name (created by proxygateway_prepare or previous run)
+    if [ -f "$TUNDEVFILE" ]; then
+        TUN_DEV=$(cat "$TUNDEVFILE")
+        echo "Using saved tun device: $TUN_DEV"
+    else
+        # Unknown original device; destroy and recreate for clean state
+        echo "No saved tun device found, recreating..."
+        ifconfig "$IFACE" destroy 2>/dev/null || true
+    fi
+fi
+
+if [ -z "$TUN_DEV" ] || ! [ -c "/dev/${TUN_DEV}" ]; then
+    echo "Creating tun device..."
+    TUN_DEV=$(ifconfig tun create)
+    if [ -z "$TUN_DEV" ]; then
+        echo "ERROR: Failed to create tun device"
+        exit 1
+    fi
+    echo "Created $TUN_DEV, renaming to $IFACE..."
+    ifconfig "$TUN_DEV" name "$IFACE" || {
+        echo "ERROR: Failed to rename $TUN_DEV to $IFACE"
+        ifconfig "$TUN_DEV" destroy 2>/dev/null || true
+        exit 1
+    }
+    echo "$TUN_DEV" > "$TUNDEVFILE"
+fi
+
+# Add to proxygateway interface group
+ifconfig "$IFACE" group proxygateway 2>/dev/null || true
+
+# Configure tunnel IP addresses
+echo "Configuring $IFACE: ${TUN_LOCAL} <-> ${TUN_PEER} mtu ${TUN_MTU}"
 ifconfig "$IFACE" inet "$TUN_LOCAL" "$TUN_PEER" mtu "$TUN_MTU" up
 
 # Step 2: Start tun2socks
-echo "Starting tun2socks..."
+# Pass the original tun device name (e.g., tun0) so tun2socks opens /dev/tun0.
+# The /dev/tunN node persists even after the interface is renamed to pgw_xxx.
+echo "Starting tun2socks (device=$TUN_DEV, proxy=$PROXY_URL)..."
 $TUN2SOCKS \
-    -device "$IFACE" \
+    -device "$TUN_DEV" \
     -proxy "$PROXY_URL" \
     -loglevel "$LOGLEVEL" \
     >> "$LOGFILE" 2>&1 &
@@ -143,7 +183,9 @@ echo "$T2S_PID" > "$PIDFILE"
 sleep 1
 if ! kill -0 "$T2S_PID" 2>/dev/null; then
     echo "ERROR: tun2socks failed to start. Check ${LOGFILE}"
-    rm -f "$PIDFILE"
+    echo "--- Last 20 lines of log ---"
+    tail -20 "$LOGFILE" 2>/dev/null || true
+    rm -f "$PIDFILE" "$TUNDEVFILE"
     ifconfig "$IFACE" destroy 2>/dev/null || true
     exit 1
 fi
@@ -155,6 +197,7 @@ echo "$TUN_PEER" > "/tmp/${IFACE}_router"
 cat > "$CONFFILE" <<EOF
 NAME="${NAME}"
 IFACE="${IFACE}"
+TUN_DEV="${TUN_DEV}"
 PROXY_TYPE="${PROXY_TYPE}"
 PROXY_ADDR="${PROXY_ADDR}"
 PROXY_PORT="${PROXY_PORT}"
