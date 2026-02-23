@@ -36,11 +36,4 @@ class IndexController extends \OPNsense\Base\IndexController
         $this->view->pick('OPNsense/ProxyGateway/index');
     }
 
-    /**
-     * Diagnostics page.
-     */
-    public function diagnosticsAction()
-    {
-        $this->view->pick('OPNsense/ProxyGateway/diagnostics');
-    }
 }
