@@ -12,7 +12,7 @@
                 var tbody = $('#status-table tbody');
                 tbody.empty();
 
-                if (data.data && data.data.connections) {
+                if (data.data && data.data.connections && data.data.connections.length > 0) {
                     // Populate log filter dropdown with connection names
                     var select = $('#log-filter-name');
                     var currentVal = select.val();
@@ -28,35 +28,52 @@
                     }
 
                     $.each(data.data.connections, function(idx, conn) {
-                        var statusIcon = conn.status === 'up'
-                            ? '<span class="fa fa-fw fa-check-circle text-success"></span> Online'
-                            : '<span class="fa fa-fw fa-times-circle text-danger"></span> Offline';
+                        var statusIcon, statusText;
+                        if (conn.status === 'up') {
+                            statusIcon = '<span class="fa fa-fw fa-check-circle text-success"></span>';
+                            statusText = 'Online';
+                        } else if (conn.status === 'down') {
+                            statusIcon = '<span class="fa fa-fw fa-times-circle text-danger"></span>';
+                            statusText = 'Down';
+                        } else if (conn.status === 'disabled') {
+                            statusIcon = '<span class="fa fa-fw fa-minus-circle text-muted"></span>';
+                            statusText = 'Disabled';
+                        } else {
+                            statusIcon = '<span class="fa fa-fw fa-question-circle text-warning"></span>';
+                            statusText = 'Not Running';
+                        }
 
                         var latency = '-';
                         if (conn.health && conn.health.latency_ms && conn.health.latency_ms !== '-1') {
                             latency = conn.health.latency_ms + ' ms';
                         }
 
+                        var tunnel = (conn.tun_local && conn.tun_local !== '-')
+                            ? conn.tun_local + ' &lt;-&gt; ' + conn.tun_peer
+                            : '-';
+
+                        var actions = '';
+                        if (conn.status === 'up' || conn.status === 'down') {
+                            actions = '<button class="btn btn-xs btn-default btn-test" data-name="' + conn.name + '">' +
+                                '<span class="fa fa-fw fa-heartbeat"></span> Test</button>';
+                        } else if (conn.status === 'not_running') {
+                            actions = '<span class="text-muted">Apply to start</span>';
+                        }
+
                         var row = '<tr>' +
                             '<td>' + conn.name + '</td>' +
                             '<td>' + conn.interface + '</td>' +
                             '<td>' + conn.proxy_type.toUpperCase() + '://' + conn.proxy_addr + ':' + conn.proxy_port + '</td>' +
-                            '<td>' + statusIcon + '</td>' +
+                            '<td>' + statusIcon + ' ' + statusText + '</td>' +
                             '<td>' + latency + '</td>' +
-                            '<td>' + conn.tun_local + ' &lt;-&gt; ' + conn.tun_peer + '</td>' +
+                            '<td>' + tunnel + '</td>' +
                             '<td>' + (conn.pid || '-') + '</td>' +
-                            '<td>' +
-                                '<button class="btn btn-xs btn-default btn-test" data-name="' + conn.name + '">' +
-                                    '<span class="fa fa-fw fa-heartbeat"></span> Test' +
-                                '</button>' +
-                            '</td>' +
+                            '<td>' + actions + '</td>' +
                             '</tr>';
                         tbody.append(row);
                     });
-                }
-
-                if (!data.data || !data.data.connections || data.data.connections.length === 0) {
-                    tbody.append('<tr><td colspan="8" class="text-center text-muted">{{ lang._("No active connections. Enable the plugin and apply to start connections.") }}</td></tr>');
+                } else {
+                    tbody.append('<tr><td colspan="8" class="text-center text-muted">{{ lang._("No connections configured. Add connections in the Connections page.") }}</td></tr>');
                 }
             });
         }
@@ -72,7 +89,7 @@
                 if (data.result) {
                     BootstrapDialog.show({
                         title: 'Health Check: ' + name,
-                        message: '<pre>' + data.result + '</pre>',
+                        message: '<pre>' + $('<div/>').text(data.result).html() + '</pre>',
                         type: data.result.indexOf('OK') >= 0 ? BootstrapDialog.TYPE_SUCCESS : BootstrapDialog.TYPE_DANGER
                     });
                 }
@@ -84,16 +101,19 @@
         function refreshLogs() {
             var name = $('#log-filter-name').val();
             ajaxGet('/api/proxygateway/diagnostics/getLogs', {name: name, lines: 100}, function(data, status) {
-                if (data.lines) {
+                if (data.lines && data.lines.length > 0) {
                     $('#log-output').text(data.lines.join('\n'));
                 } else {
-                    $('#log-output').text('No logs available.');
+                    $('#log-output').text('{{ lang._("No logs available. Logs are created when connections are started.") }}');
                 }
             });
         }
 
         // Refresh button
-        $('#btn-refresh-status').click(refreshStatus);
+        $('#btn-refresh-status').click(function() {
+            refreshStatus();
+            refreshLogs();
+        });
         $('#btn-refresh-logs').click(refreshLogs);
 
         // Auto-refresh every 10 seconds

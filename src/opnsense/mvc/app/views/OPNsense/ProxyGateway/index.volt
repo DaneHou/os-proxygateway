@@ -36,6 +36,17 @@
                             return '<span class="fa fa-fw fa-times-circle text-danger"></span>';
                         }
                     },
+                    "connectionStatus": function(column, row) {
+                        if (row.connectionStatus === 'up') {
+                            return '<span class="fa fa-fw fa-plug text-success" title="Connected"></span> Connected';
+                        } else if (row.connectionStatus === 'down') {
+                            return '<span class="fa fa-fw fa-plug text-danger" title="Down"></span> Down';
+                        } else if (row.connectionStatus === 'disabled') {
+                            return '<span class="fa fa-fw fa-minus-circle text-muted" title="Disabled"></span> Disabled';
+                        } else {
+                            return '<span class="fa fa-fw fa-question-circle text-warning" title="Not Running"></span> Not Running';
+                        }
+                    },
                     "proxyInfo": function(column, row) {
                         return row.proxyType.toUpperCase() + '://' + row.proxyServer + ':' + row.proxyPort;
                     }
@@ -56,6 +67,19 @@
             },
             onAction: function(data, status) {
                 updateServiceControlUI('proxygateway');
+                // Reload grid to update connection status
+                $('#grid-connections').bootgrid('reload');
+                // Show reconfigure output so the user can see errors
+                if (data && data.response) {
+                    var escaped = $('<div/>').text(data.response).html();
+                    var hasError = data.response.toLowerCase().indexOf('error') >= 0 ||
+                                   data.response.toLowerCase().indexOf('fail') >= 0;
+                    BootstrapDialog.show({
+                        title: hasError ? '{{ lang._("Reconfigure Errors") }}' : '{{ lang._("Reconfigure Result") }}',
+                        message: '<pre style="max-height:400px;overflow:auto;">' + escaped + '</pre>',
+                        type: hasError ? BootstrapDialog.TYPE_WARNING : BootstrapDialog.TYPE_SUCCESS
+                    });
+                }
             }
         });
 
@@ -113,6 +137,7 @@
                 <th data-column-id="uuid" data-type="string" data-identifier="true" data-visible="false">ID</th>
                 <th data-column-id="enabled" data-width="5em" data-type="string" data-formatter="status">{{ lang._('Enabled') }}</th>
                 <th data-column-id="name" data-type="string">{{ lang._('Name') }}</th>
+                <th data-column-id="connectionStatus" data-width="9em" data-type="string" data-formatter="connectionStatus" data-sortable="false">{{ lang._('Connection') }}</th>
                 <th data-column-id="description" data-type="string">{{ lang._('Description') }}</th>
                 <th data-column-id="proxyType" data-type="string" data-formatter="proxyInfo" data-visible="false">{{ lang._('Proxy') }}</th>
                 <th data-column-id="proxyServer" data-type="string">{{ lang._('Server') }}</th>
