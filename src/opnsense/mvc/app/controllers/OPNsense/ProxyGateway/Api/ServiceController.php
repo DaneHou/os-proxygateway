@@ -49,7 +49,9 @@ class ServiceController extends ApiMutableServiceControllerBase
         $result = ['status' => 'failed'];
 
         if ($this->request->isPost()) {
-            $this->sessionClose();
+            // Release PHP session lock so the browser isn't blocked during
+            // the potentially long-running backend call.
+            session_write_close();
 
             $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
 
