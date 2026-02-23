@@ -1,127 +1,135 @@
 <form>
-    <tab id="general-tab" description="General">
-        <field>
-            <id>connection.enabled</id>
-            <label>Enabled</label>
-            <type>checkbox</type>
-            <help>Enable this proxy gateway connection.</help>
-        </field>
-        <field>
-            <id>connection.name</id>
-            <label>Name</label>
-            <type>text</type>
-            <help>Unique name for this connection (alphanumeric, max 16 chars). Used as interface suffix: pgw_&lt;name&gt;</help>
-        </field>
-        <field>
-            <id>connection.description</id>
-            <label>Description</label>
-            <type>text</type>
-            <help>Optional description for this connection.</help>
-        </field>
-    </tab>
-    <tab id="proxy-tab" description="Proxy Server">
-        <field>
-            <id>connection.proxyType</id>
-            <label>Type</label>
-            <type>dropdown</type>
-            <help>Upstream proxy protocol type.</help>
-        </field>
-        <field>
-            <id>connection.proxyServer</id>
-            <label>Server</label>
-            <type>text</type>
-            <help>Hostname or IP address of the upstream proxy server.</help>
-        </field>
-        <field>
-            <id>connection.proxyPort</id>
-            <label>Port</label>
-            <type>text</type>
-            <help>Port number of the upstream proxy server.</help>
-        </field>
-        <field>
-            <id>connection.authEnabled</id>
-            <label>Authentication</label>
-            <type>checkbox</type>
-            <help>Enable proxy authentication.</help>
-        </field>
-        <field>
-            <id>connection.authUser</id>
-            <label>Username</label>
-            <type>text</type>
-            <style>auth-fields</style>
-            <help>Proxy authentication username.</help>
-        </field>
-        <field>
-            <id>connection.authPass</id>
-            <label>Password</label>
-            <type>password</type>
-            <style>auth-fields</style>
-            <help>Proxy authentication password.</help>
-        </field>
-    </tab>
-    <tab id="tunnel-tab" description="Tunnel">
-        <field>
-            <id>connection.tunAddress</id>
-            <label>Tunnel Address</label>
-            <type>text</type>
-            <help>Local IPv4 address for the tunnel interface. Leave empty for auto-assignment from the 172.31.0.0/16 range.</help>
-        </field>
-        <field>
-            <id>connection.tunMTU</id>
-            <label>MTU</label>
-            <type>text</type>
-            <help>Maximum Transmission Unit for the tunnel (1280-9000, default 1500).</help>
-        </field>
-    </tab>
-    <tab id="dns-tab" description="DNS">
-        <field>
-            <id>connection.dnsMode</id>
-            <label>DNS Mode</label>
-            <type>dropdown</type>
-            <help>How DNS queries should be handled for traffic routed through this gateway.</help>
-        </field>
-        <field>
-            <id>connection.dnsServer</id>
-            <label>Custom DNS Server</label>
-            <type>text</type>
-            <style>dns-custom-fields</style>
-            <help>DNS server to use when DNS mode is set to Custom.</help>
-        </field>
-    </tab>
-    <tab id="health-tab" description="Health Check">
-        <field>
-            <id>connection.healthCheckEnabled</id>
-            <label>Enable Health Check</label>
-            <type>checkbox</type>
-            <help>Periodically probe connectivity through this proxy tunnel.</help>
-        </field>
-        <field>
-            <id>connection.healthCheckInterval</id>
-            <label>Interval (seconds)</label>
-            <type>text</type>
-            <style>health-fields</style>
-            <help>How often to run the health check probe (5-3600 seconds).</help>
-        </field>
-        <field>
-            <id>connection.healthCheckTarget</id>
-            <label>Target URL</label>
-            <type>text</type>
-            <style>health-fields</style>
-            <help>URL to probe for health checks. Must return HTTP 200/204.</help>
-        </field>
-    </tab>
-    <tab id="gateway-tab" description="Gateway">
-        <field>
-            <id>connection.gatewayPriority</id>
-            <label>Gateway Priority</label>
-            <type>text</type>
-            <help>Gateway priority for routing (1=highest, 255=lowest).</help>
-        </field>
-        <field>
-            <id>connection.killSwitch</id>
-            <label>Kill Switch</label>
-            <type>checkbox</type>
-            <help>When enabled, drop all traffic from assigned sources if this tunnel goes down (instead of falling back to WAN).</help>
-        </field>
-    </tab>
+    <field>
+        <id>connection.enabled</id>
+        <label>Enabled</label>
+        <type>checkbox</type>
+        <help>Enable this proxy gateway connection.</help>
+    </field>
+    <field>
+        <id>connection.name</id>
+        <label>Name</label>
+        <type>text</type>
+        <help>Unique name for this connection (alphanumeric, max 16 chars). Used as interface suffix: pgw_&lt;name&gt;</help>
+    </field>
+    <field>
+        <id>connection.description</id>
+        <label>Description</label>
+        <type>text</type>
+        <help>Optional description for this connection.</help>
+    </field>
+    <field>
+        <type>header</type>
+        <label>Proxy Server</label>
+    </field>
+    <field>
+        <id>connection.proxyType</id>
+        <label>Type</label>
+        <type>dropdown</type>
+        <help>Upstream proxy protocol type.</help>
+    </field>
+    <field>
+        <id>connection.proxyServer</id>
+        <label>Server</label>
+        <type>text</type>
+        <help>Hostname or IP address of the upstream proxy server.</help>
+    </field>
+    <field>
+        <id>connection.proxyPort</id>
+        <label>Port</label>
+        <type>text</type>
+        <help>Port number of the upstream proxy server.</help>
+    </field>
+    <field>
+        <id>connection.authEnabled</id>
+        <label>Authentication</label>
+        <type>checkbox</type>
+        <help>Enable proxy authentication.</help>
+    </field>
+    <field>
+        <id>connection.authUser</id>
+        <label>Username</label>
+        <type>text</type>
+        <style>auth_fields</style>
+        <help>Proxy authentication username.</help>
+    </field>
+    <field>
+        <id>connection.authPass</id>
+        <label>Password</label>
+        <type>password</type>
+        <style>auth_fields</style>
+        <help>Proxy authentication password.</help>
+    </field>
+    <field>
+        <type>header</type>
+        <label>Tunnel Settings</label>
+    </field>
+    <field>
+        <id>connection.tunAddress</id>
+        <label>Tunnel Address</label>
+        <type>text</type>
+        <help>Local IPv4 address for the tunnel interface. Leave empty for auto-assignment from the 172.31.0.0/16 range.</help>
+    </field>
+    <field>
+        <id>connection.tunMTU</id>
+        <label>MTU</label>
+        <type>text</type>
+        <help>Maximum Transmission Unit for the tunnel (1280-9000, default 1500).</help>
+    </field>
+    <field>
+        <type>header</type>
+        <label>DNS</label>
+    </field>
+    <field>
+        <id>connection.dnsMode</id>
+        <label>DNS Mode</label>
+        <type>dropdown</type>
+        <help>How DNS queries should be handled for traffic routed through this gateway.</help>
+    </field>
+    <field>
+        <id>connection.dnsServer</id>
+        <label>Custom DNS Server</label>
+        <type>text</type>
+        <style>dns_custom_fields</style>
+        <help>DNS server to use when DNS mode is set to Custom.</help>
+    </field>
+    <field>
+        <type>header</type>
+        <label>Health Check</label>
+    </field>
+    <field>
+        <id>connection.healthCheckEnabled</id>
+        <label>Enable Health Check</label>
+        <type>checkbox</type>
+        <help>Periodically probe connectivity through this proxy tunnel.</help>
+    </field>
+    <field>
+        <id>connection.healthCheckInterval</id>
+        <label>Interval (seconds)</label>
+        <type>text</type>
+        <style>health_fields</style>
+        <help>How often to run the health check probe (5-3600 seconds).</help>
+    </field>
+    <field>
+        <id>connection.healthCheckTarget</id>
+        <label>Target URL</label>
+        <type>text</type>
+        <style>health_fields</style>
+        <help>URL to probe for health checks. Must return HTTP 200/204.</help>
+    </field>
+    <field>
+        <type>header</type>
+        <label>Gateway</label>
+    </field>
+    <field>
+        <id>connection.gatewayPriority</id>
+        <label>Gateway Priority</label>
+        <type>text</type>
+        <help>Gateway priority for routing (1=highest, 255=lowest).</help>
+    </field>
+    <field>
+        <id>connection.killSwitch</id>
+        <label>Kill Switch</label>
+        <type>checkbox</type>
+        <help>When enabled, drop all traffic from assigned sources if this tunnel goes down (instead of falling back to WAN).</help>
+    </field>
 </form>

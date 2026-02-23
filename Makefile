@@ -95,7 +95,8 @@ install-tun2socks:
 	@mkdir -p $(BIN_DIR)
 	@if [ ! -x $(BIN_DIR)/tun2socks ]; then \
 		fetch -o /tmp/tun2socks.zip $(TUN2SOCKS_URL) && \
-		unzip -o /tmp/tun2socks.zip -d $(BIN_DIR)/ && \
+		unzip -o /tmp/tun2socks.zip -d /tmp/ && \
+		mv /tmp/tun2socks-$(PLUGIN_ARCH) $(BIN_DIR)/tun2socks && \
 		chmod +x $(BIN_DIR)/tun2socks && \
 		rm -f /tmp/tun2socks.zip && \
 		echo ">>> tun2socks installed: $$($(BIN_DIR)/tun2socks --version 2>&1 | head -1)"; \
@@ -106,9 +107,27 @@ install-tun2socks:
 activate:
 	@echo ">>> Activating plugin..."
 	@sysrc proxygateway_enable=YES 2>/dev/null || true
-	@$(PREFIX)/sbin/configctl configd actions 2>/dev/null || true
-	@$(PREFIX)/sbin/configctl interface invoke registration 2>/dev/null || true
+	# Flush menu cache (MenuSystem.php caches to this file)
+	@rm -f /tmp/opnsense_menu_cache.xml 2>/dev/null || true
+	# Flush Volt template cache and PHP opcache
+	@rm -f $(DESTDIR)$(PREFIX)/opnsense/mvc/app/cache/*.php 2>/dev/null || true
+	# Verify plugin hooks load without PHP errors
+	@echo ">>> Checking plugin for PHP errors..."
+	@php -l $(PLUGINS_DIR)/proxygateway.inc 2>&1 || true
+	@php -l $(MVC_DIR)/models/OPNsense/ProxyGateway/ProxyGateway.php 2>&1 || true
+	# Restart configd to pick up new actions
+	@service configd restart 2>/dev/null || true
+	# Restart web GUI to flush opcache and pick up new menu/controllers
+	@service php-fpm restart 2>/dev/null || true
+	# Verify plugin registration
+	@echo ">>> Verifying plugin registration..."
+	@pluginctl -c 2>/dev/null || true
+	@echo ""
 	@echo ">>> Plugin activated."
+	@echo ">>> Hard-refresh your browser (Ctrl+Shift+R) to see the menu."
+	@echo ""
+	@echo ">>> If menu still missing, check: cat /tmp/PHP_errors.log"
+	@echo ">>> Debug hooks: pluginctl (list all plugin hooks)"
 
 uninstall:
 	@echo ">>> Stopping service..."
@@ -122,6 +141,8 @@ uninstall:
 	@rm -f $(PLUGINS_DIR)/proxygateway.inc
 	@rm -f $(RCD_DIR)/opnsense-proxygateway
 	@rm -rf /var/run/proxygateway
+	@rm -f /tmp/opnsense_menu_cache.xml 2>/dev/null || true
+	@rm -f $(DESTDIR)$(PREFIX)/opnsense/mvc/app/cache/*.php 2>/dev/null || true
 	@sysrc -x proxygateway_enable 2>/dev/null || true
 	@$(PREFIX)/sbin/configctl configd actions 2>/dev/null || true
 	@echo ">>> Plugin removed. tun2socks binary left in place."
