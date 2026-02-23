@@ -1,0 +1,18 @@
+<acl>
+    <page-services-proxygateway>
+        <name>Services: Proxy Gateway: Connections</name>
+        <patterns>
+            <pattern>ui/proxygateway/*</pattern>
+            <pattern>api/proxygateway/connection/*</pattern>
+            <pattern>api/proxygateway/service/*</pattern>
+        </patterns>
+    </page-services-proxygateway>
+    <page-services-proxygateway-diagnostics>
+        <name>Services: Proxy Gateway: Diagnostics</name>
+        <patterns>
+            <pattern>ui/proxygateway/diagnostics/*</pattern>
+            <pattern>api/proxygateway/diagnostics/*</pattern>
+            <pattern>api/proxygateway/service/*</pattern>
+        </patterns>
+    </page-services-proxygateway-diagnostics>
+</acl>
