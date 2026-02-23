@@ -18,26 +18,39 @@
  * AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
  */
 
+function proxygateway_enabled()
+{
+    return (string)(new \OPNsense\ProxyGateway\ProxyGateway())->general->enabled == '1';
+}
+
 /**
- * Register proxy gateway service with OPNsense service manager.
- * Displayed in Services > Diagnostics > Services.
+ * Register proxy gateway services with OPNsense service manager.
+ * Each enabled connection is registered as a separate service instance,
+ * following the same pattern as WireGuard.
  */
 function proxygateway_services()
 {
     $services = [];
 
+    if (!proxygateway_enabled()) {
+        return $services;
+    }
+
     $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
-    if ((string)$mdl->general->enabled === '1') {
-        $services[] = [
-            'description' => gettext('Proxy Gateway'),
-            'configd' => [
-                'restart' => ['proxygateway restart'],
-                'start'   => ['proxygateway start'],
-                'stop'    => ['proxygateway stop'],
-            ],
-            'name' => 'proxygateway',
-            'pidfile' => '/var/run/proxygateway/master.pid',
-        ];
+    foreach ($mdl->connections->connection->iterateItems() as $uuid => $conn) {
+        if (!empty((string)$conn->enabled)) {
+            $services[] = [
+                'description' => 'Proxy Gateway ' . htmlspecialchars($conn->name),
+                'configd' => [
+                    'start'   => ["proxygateway start {$uuid}"],
+                    'restart' => ["proxygateway restart {$uuid}"],
+                    'stop'    => ["proxygateway stop {$uuid}"],
+                ],
+                'name' => 'proxygateway',
+                'nocheck' => true,
+                'id' => $uuid,
+            ];
+        }
     }
 
     return $services;
@@ -49,81 +62,96 @@ function proxygateway_services()
  */
 function proxygateway_devices()
 {
-    $devices = [];
+    $names = [];
 
-    $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
-    if ((string)$mdl->general->enabled !== '1') {
-        return $devices;
+    if (!proxygateway_enabled()) {
+        return [['pattern' => '^pgw', 'volatile' => true]];
     }
 
-    $names = [];
+    $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
     foreach ($mdl->connections->connection->iterateItems() as $uuid => $conn) {
-        if ((string)$conn->enabled === '1') {
+        if (!empty((string)$conn->enabled)) {
             $name = (string)$conn->name;
             $ifname = "pgw_{$name}";
             $names[$ifname] = [
-                'descr'   => sprintf(gettext('Proxy Gateway: %s'), (string)$conn->description ?: $name),
-                'ifdescr' => $name,
+                'descr'   => sprintf('%s (Proxy Gateway - %s)', $ifname, (string)$conn->description ?: $name),
+                'ifdescr' => (string)$conn->description ?: $name,
                 'name'    => $ifname,
             ];
         }
     }
 
-    if (!empty($names)) {
-        $devices[] = [
-            'function' => 'proxygateway_configure_device',
-            'names'    => $names,
-            'pattern'  => '^pgw_',
-            'volatile' => true,
-            'type'     => 'proxygateway',
-        ];
-    }
-
-    return $devices;
+    return [[
+        'function'     => 'proxygateway_prepare',
+        'configurable' => false,
+        'pattern'      => '^pgw',
+        'type'         => 'proxygateway',
+        'volatile'     => true,
+        'names'        => $names,
+    ]];
 }
 
 /**
- * Register proxy gateway tun interfaces as virtual OPNsense interfaces.
+ * Device creation callback. Called by the device registration system when
+ * an interface needs to be brought up. Creates the tun device if it doesn't exist.
+ */
+function proxygateway_prepare($device)
+{
+    $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
+    foreach ($mdl->connections->connection->iterateItems() as $uuid => $conn) {
+        $ifname = "pgw_" . (string)$conn->name;
+        if ($device != $ifname) {
+            continue;
+        }
+
+        if (!does_interface_exist($device)) {
+            mwexecf('/sbin/ifconfig tun create name %s', $device);
+            mwexecf('/sbin/ifconfig %s group proxygateway', $device);
+        }
+
+        return $device;
+    }
+
+    return null;
+}
+
+/**
+ * Register a virtual interface group for all proxy gateway connections.
+ * This allows OPNsense to show a "Proxy Gateway (Group)" interface.
  */
 function proxygateway_interfaces()
 {
     $interfaces = [];
 
-    $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
-    if ((string)$mdl->general->enabled !== '1') {
+    if (!proxygateway_enabled()) {
         return $interfaces;
     }
 
-    foreach ($mdl->connections->connection->iterateItems() as $uuid => $conn) {
-        if ((string)$conn->enabled === '1') {
-            $name = (string)$conn->name;
-            $ifname = "pgw_{$name}";
-            $interfaces[$ifname] = [
-                'if'       => $ifname,
-                'descr'    => sprintf('proxygateway_%s', $name),
-                'type'     => 'none',
-                'virtual'  => true,
-                'networks' => [],
-            ];
-        }
-    }
+    $interfaces['proxygateway'] = [
+        'descr'   => gettext('Proxy Gateway (Group)'),
+        'if'      => 'proxygateway',
+        'virtual' => true,
+        'enable'  => true,
+        'type'    => 'group',
+        'networks' => [],
+    ];
 
     return $interfaces;
 }
 
 /**
  * Register firewall rules for proxy gateway connections.
- * Handles outbound NAT on tun interfaces and DNS leak prevention.
+ * Handles outbound NAT on tun interfaces and proxy route-loop prevention.
  */
 function proxygateway_firewall(\OPNsense\Firewall\Plugin $fw)
 {
-    $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
-    if ((string)$mdl->general->enabled !== '1') {
+    if (!proxygateway_enabled()) {
         return;
     }
 
+    $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
     foreach ($mdl->connections->connection->iterateItems() as $uuid => $conn) {
-        if ((string)$conn->enabled !== '1') {
+        if (empty((string)$conn->enabled)) {
             continue;
         }
 
@@ -136,14 +164,13 @@ function proxygateway_firewall(\OPNsense\Firewall\Plugin $fw)
         $fw->registerNatRule(
             1000,
             [
-                'interface'   => $ifname,
-                'descr'       => "ProxyGW {$name}: Outbound NAT",
-                'type'        => 'pass',
-                'protocol'    => 'tcp/udp',
-                'poolopts'    => '',
-                'target'      => 'iface:' . $ifname,
-                'staticnatport' => false,
-                'log'         => false,
+                'interface'      => $ifname,
+                'descr'          => "ProxyGW {$name}: Outbound NAT",
+                'type'           => 'pass',
+                'protocol'       => 'tcp/udp',
+                'target'         => 'iface:' . $ifname,
+                'staticnatport'  => false,
+                'log'            => false,
             ]
         );
 
@@ -171,54 +198,36 @@ function proxygateway_firewall(\OPNsense\Firewall\Plugin $fw)
 function proxygateway_configure()
 {
     return [
-        'bootup' => ['proxygateway_configure_bootup:3'],
-        'newwanip' => ['proxygateway_configure_newwanip:3'],
+        'newwanip' => ['proxygateway_configure_do'],
+        'vpn'      => ['proxygateway_configure_do'],
     ];
 }
 
 /**
- * Start all enabled proxy gateways on bootup.
+ * Configuration handler called on system events.
  */
-function proxygateway_configure_bootup($verbose = false)
+function proxygateway_configure_do($verbose = false)
 {
-    if ($verbose) {
-        echo 'Starting Proxy Gateway connections...';
+    if (!proxygateway_enabled()) {
+        return;
     }
 
-    $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
-    if ((string)$mdl->general->enabled === '1') {
-        configd_run('proxygateway start');
-    }
-
-    if ($verbose) {
-        echo "done.\n";
-    }
+    service_log('Configuring Proxy Gateway...', $verbose);
+    configd_run('proxygateway reconfigure');
+    service_log("done.\n", $verbose);
 }
 
 /**
- * Reconfigure after WAN IP changes.
+ * HA sync metadata.
  */
-function proxygateway_configure_newwanip($verbose = false)
+function proxygateway_xmlrpc_sync()
 {
-    $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
-    if ((string)$mdl->general->enabled === '1') {
-        configd_run('proxygateway reconfigure');
-    }
-}
-
-/**
- * Callback to create/configure a tun device.
- * Called by the device registration system when an interface needs to be brought up.
- */
-function proxygateway_configure_device($device)
-{
-    // The actual device creation is handled by setup.sh via configd.
-    // This callback is invoked by OPNsense when the interface is being configured.
-    // We extract the connection name from the device name and trigger setup.
-    if (preg_match('/^pgw_(.+)$/', $device, $matches)) {
-        $name = $matches[1];
-        configd_run("proxygateway setup {$name}");
-    }
+    return [[
+        'id'          => 'proxygateway',
+        'section'     => 'OPNsense.ProxyGateway',
+        'description' => gettext('Proxy Gateway'),
+        'services'    => ['proxygateway'],
+    ]];
 }
 
 /**
@@ -226,11 +235,7 @@ function proxygateway_configure_device($device)
  */
 function proxygateway_syslog()
 {
-    $logfacilities = [];
-
-    $logfacilities['proxygateway'] = [
-        'facility' => ['proxygateway'],
+    return [
+        'proxygateway' => ['facility' => ['proxygateway']],
     ];
-
-    return $logfacilities;
 }
