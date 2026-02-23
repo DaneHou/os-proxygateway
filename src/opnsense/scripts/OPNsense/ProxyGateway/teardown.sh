@@ -58,6 +58,10 @@ else
 fi
 
 # Step 2: Remove router file (deregisters gateway)
+# Updated to use /var/run for consistency with setup.sh
+rm -f "/var/run/${IFACE}_router"
+rm -f "/var/run/${IFACE}_routerv6"
+# Also remove old /tmp files for backward compatibility
 rm -f "/tmp/${IFACE}_router"
 rm -f "/tmp/${IFACE}_routerv6"
 log_debug "Removed router files"
