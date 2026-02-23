@@ -107,14 +107,25 @@ install-tun2socks:
 activate:
 	@echo ">>> Activating plugin..."
 	@sysrc proxygateway_enable=YES 2>/dev/null || true
-	# Flush Volt template cache so new pages render correctly
+	# Flush Volt template cache and PHP opcache
 	@rm -f $(DESTDIR)$(PREFIX)/opnsense/mvc/app/cache/*.php 2>/dev/null || true
+	# Verify plugin hooks load without PHP errors
+	@echo ">>> Checking plugin for PHP errors..."
+	@php -l $(PLUGINS_DIR)/proxygateway.inc 2>&1 || true
+	@php -l $(MVC_DIR)/models/OPNsense/ProxyGateway/ProxyGateway.php 2>&1 || true
 	# Restart configd to pick up new actions
 	@service configd restart 2>/dev/null || true
-	@$(PREFIX)/sbin/configctl interface invoke registration 2>/dev/null || true
-	# Restart web GUI to pick up new menu items and controllers
+	# Restart web GUI to flush opcache and pick up new menu/controllers
 	@service php-fpm restart 2>/dev/null || true
-	@echo ">>> Plugin activated. Refresh your browser to see the menu."
+	# Verify plugin registration
+	@echo ">>> Verifying plugin registration..."
+	@pluginctl -c 2>/dev/null || true
+	@echo ""
+	@echo ">>> Plugin activated."
+	@echo ">>> Hard-refresh your browser (Ctrl+Shift+R) to see the menu."
+	@echo ""
+	@echo ">>> If menu still missing, check: cat /tmp/PHP_errors.log"
+	@echo ">>> Debug hooks: pluginctl (list all plugin hooks)"
 
 uninstall:
 	@echo ">>> Stopping service..."
