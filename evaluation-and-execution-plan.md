@@ -6,6 +6,24 @@
 
 ---
 
+## 零、关键发现（调研结论）
+
+在评估之前，针对设计文档中的 Open Questions 做了深入调研，发现了几个**改变可行性判断**的关键事实：
+
+| 发现 | 影响 |
+|------|------|
+| **tun2socks v2.6.0 已改为 MIT 许可证** | 设计文档中标注 GPL-3.0 已过时。MIT 许可证完全兼容 OPNsense 的 BSD 生态，可以直接打包进插件，无需拆分 |
+| **tun2socks 提供 FreeBSD 预编译二进制** | 支持 `amd64`、`arm64`、`386` 架构，无需自己交叉编译 |
+| **已有人在 OPNsense 上手动跑通整个流程** | [Kre3 的博客](https://blog.kre3.net/en/article/setup-tun2socks-in-opnsense/) 完整记录了 tun2socks → tun 设备 → OPNsense 接口 → 策略路由的手动配置，证明核心概念可行 |
+| **OPNsense 有 `_devices()` 和 `_interfaces()` 插件钩子** | 可以正式注册虚拟设备和接口，WireGuard 插件已用此模式 |
+| **"Dynamic gateway policy" 机制可用** | 接口设置中启用此选项可自动生成网关，无需手动写 config.xml |
+| **sing-box TUN 模式在 FreeBSD 上已坏且不修** | sing-box 不是可行的备选方案（Issue #635 closed as "not planned"） |
+| **redsocks 不支持 FreeBSD** | 依赖 Linux iptables/netfilter，不可行 |
+
+**底线：核心技术风险远低于预期。PoC 已被 Kre3 的博客间接验证，可以大幅压缩 Phase 0 的时间。**
+
+---
+
 ## 一、设计总结
 
 核心思路：在 OPNsense 上将远程 SOCKS5/HTTP 代理包装为标准网关接口（tun 设备），让用户通过防火墙规则将特定设备或子网的流量透明地路由到不同的代理服务器，无需客户端任何配置。
@@ -80,7 +98,7 @@
 
 ---
 
-## 四、可行性评估 (Feasibility) — 评分: ★★★☆☆ (3.5/5)
+## 四、可行性评估 (Feasibility) — 评分: ★★★★☆ (4/5，调研后上调）
 
 ### 技术可行性分析
 
@@ -88,9 +106,9 @@
 
 | 组件 | 依据 |
 |------|------|
-| tun2socks 在 FreeBSD 上运行 | Go 的 `golang.org/x/net` 和 gVisor netstack 支持 FreeBSD tun 设备；tun2socks v2 有 FreeBSD 编译目标 |
-| OPNsense MVC 插件开发 | 框架成熟，大量第三方插件（os-wireguard、os-haproxy 等）可作参考 |
-| tun 设备创建和路由 | FreeBSD 原生支持 `ifconfig tunN create`，OPNsense 的 WireGuard 插件已经用了类似模式 |
+| tun2socks 在 FreeBSD 上运行 | **已验证：** v2.6.0 将 FreeBSD 列为一等平台，有预编译二进制（amd64/arm64/386），Kre3 博客已在 OPNsense 上实际跑通 |
+| OPNsense MVC 插件开发 | 框架成熟，OPNsense 26.1 已接近全量 MVC/API 覆盖，有 `_devices()` 和 `_interfaces()` 钩子注册虚拟设备 |
+| tun 设备创建和路由 | FreeBSD 原生支持 `ifconfig tunN create`，WireGuard 插件已用 `_devices()` 钩子 + "Dynamic gateway policy" 实现了完全相同的模式 |
 | configd action 定义 | 标准 OPNsense 模式，文档清晰 |
 | pf NAT 规则生成 | OPNsense 有 API 和 configd 支持动态规则 |
 
@@ -98,8 +116,8 @@
 
 | 问题 | 风险 | 解决路径 |
 |------|------|---------|
-| **tun2socks 在 OPNsense 特定内核上的兼容性** | 高 | Phase 1 第一步就应该在真实 OPNsense 上编译测试 tun2socks |
-| **动态网关注册** | 高 | OPNsense 的网关注册依赖 `config.xml` + `dpinger`，运行时动态添加可能需要 `configctl interface routes reconfigure`；需要实验确认是否可以不做全量 reload |
+| **tun2socks 在 OPNsense 特定内核上的兼容性** | ~~高~~ → **低** | Kre3 博客已验证可行；预编译二进制可直接使用 |
+| **动态网关注册** | ~~高~~ → **中** | 已确认两种方式：(1) "Dynamic gateway policy" 自动生成网关；(2) 写 `/tmp/[iface]_router` 文件 + `configctl interface routes reconfigure`。WireGuard 插件已用此模式 |
 | **FreeBSD tun 设备在 tun2socks 下的性能** | 中 | 需要在目标硬件上做 iperf 基准测试，确认 userland 开销是否可接受 |
 | **DNS 泄露防护的 pf 规则复杂度** | 中 | 多实例时 pf 规则可能变得复杂，需要仔细设计规则生成逻辑 |
 | **tun2socks 进程稳定性** | 中 | 长时间运行是否有内存泄漏？需要 stress test；可用 rc.d 的 restart 机制兜底 |
@@ -110,7 +128,7 @@
 |------|------|------|
 | HTTP 代理不支持 UDP | DNS 和 UDP 流量无法通过 HTTP 代理 | 文档说明；推荐使用 SOCKS5；可选 DNS-over-HTTPS 方案 |
 | userland 转发有性能上限 | 不适合 Gbps 级别高吞吐场景 | 目标定位家庭/小型办公，100-500Mbps 足够 |
-| GPL-3.0 (tun2socks) | 可能影响分发方式 | 将 tun2socks 作为独立 pkg 安装，插件本身用 BSD 许可 |
+| ~~GPL-3.0~~ (tun2socks) | **已解决：** v2.6.0 已改为 MIT 许可证 | 无需拆分包，可直接捆绑 |
 
 ### 开发能力要求
 
@@ -168,48 +186,44 @@
 |------|------|------|
 | 实用性 | ★★★★☆ | 解决真实痛点，目标场景明确 |
 | 影响力 | ★★★★☆ | 填补 OPNsense 生态空白，用户群虽小众但需求强 |
-| 可行性 | ★★★½☆ | 技术路径清晰但有关键风险需验证（tun2socks 兼容性、网关注册） |
+| 可行性 | ★★★★☆ | 核心链路已被第三方验证可行，tun2socks MIT 许可 + FreeBSD 预编译二进制，主要风险已降级 |
 | 拓展性 | ★★★★★ | 模块化设计，扩展空间大 |
-| **综合** | **★★★★☆** | **值得投入，但需要先做技术验证（PoC）来降低风险** |
+| **综合** | **★★★★☆ (4.25/5)** | **强烈建议投入。核心可行性已有第三方验证，技术栈成熟，市场空白明确** |
 
 ### 核心建议
 
-**先做 PoC（Proof of Concept），再做插件。** 不要直接进入 OPNsense MVC 开发，先在一台真实的 OPNsense 机器上手动验证核心流程能跑通。
+**PoC 已被间接验证，可以快速过 Phase 0 后直接进入 Phase 1 开发。** Kre3 的博客已经证明 tun2socks + OPNsense tun 设备 + 策略路由的完整链路是可行的。Phase 0 只需要在自己的环境上复现一遍（预计 1-2 小时），确认后立即开始 Phase 1 的插件骨架搭建。
 
 ---
 
 ## 七、可执行计划
 
-### Phase 0: 技术验证 (PoC) — 最关键
+### Phase 0: 技术验证 (PoC) — 预计 1-2 小时
 
-> **目标：** 在真实 OPNsense 上手动验证 tun2socks → tun 设备 → 网关注册 → 策略路由的完整链路
+> **目标：** 在自己的 OPNsense 环境上复现 [Kre3 的博客](https://blog.kre3.net/en/article/setup-tun2socks-in-opnsense/) 中已验证的流程
+>
+> **注意：** 核心概念已被第三方验证可行，此阶段目的是在你自己的硬件/环境上确认，而非探索未知。
 
 #### Step 0.1: 环境准备
 
 - [ ] 准备 OPNsense 测试环境（物理机或 VirtualBox/Proxmox 虚拟机）
   - 最低：2 NIC（WAN + LAN）
-  - 推荐：OPNsense 24.7+ on FreeBSD 14
+  - 推荐：OPNsense 24.7+ / 26.1 on FreeBSD 14
 - [ ] 准备一个可用的 SOCKS5 代理服务器（可以用 SSH 隧道快速搭建：`ssh -D 1080 user@remote-server`）
 - [ ] 准备一台 LAN 内的测试客户端设备
 
-#### Step 0.2: 编译 tun2socks for FreeBSD
+#### Step 0.2: 下载 tun2socks 预编译二进制
 
 ```bash
-# 在任意 Linux/Mac 开发机上交叉编译
-git clone https://github.com/xjasonlyu/tun2socks.git
-cd tun2socks
-GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -o tun2socks-freebsd-amd64 ./cmd/tun2socks
-
-# 将二进制传到 OPNsense
-scp tun2socks-freebsd-amd64 root@opnsense:/usr/local/bin/tun2socks
+# 直接从 GitHub Releases 下载 FreeBSD 预编译二进制（无需自行编译）
+# https://github.com/xjasonlyu/tun2socks/releases
+fetch https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-freebsd-amd64.zip
+unzip tun2socks-freebsd-amd64.zip
+mv tun2socks /usr/local/bin/tun2socks
 chmod +x /usr/local/bin/tun2socks
 ```
 
 - [ ] 验证二进制能启动并输出 `--help`
-- [ ] 如果编译失败，尝试备选方案：
-  - `hev-socks5-tunnel` (C-based, 轻量)
-  - `badvpn-tun2socks` (C-based, 经典)
-  - 直接在 FreeBSD jail 里编译
 
 #### Step 0.3: 手动创建隧道
 
@@ -238,26 +252,23 @@ curl --interface 172.31.1.1 http://ifconfig.me  # 应该显示代理 IP
 #### Step 0.4: 网关注册测试
 
 ```bash
-# 方法 A：通过 OPNsense 的 config.xml 注册网关
-# 编辑 /conf/config.xml，在 <gateways> 下添加：
-# <gateway_item>
-#   <interface>tun4001</interface>
-#   <gateway>172.31.1.2</gateway>
-#   <name>PROXYGW_TEST</name>
-#   <descr>Test Proxy Gateway</descr>
-#   <monitor_disable>0</monitor_disable>
-# </gateway_item>
+# 方法 A（推荐）：通过 Interfaces → Assignments 分配 tun 设备
+# 1. OPNsense GUI → Interfaces → Assignments → 选择 tun4001 → 分配为 OPT 接口
+# 2. 进入新接口设置 → Enable → 配置 IPv4: Static → IP: 172.31.1.1/30
+# 3. 勾选 "Dynamic gateway policy"（关键！）→ Save → Apply
+# 4. 系统将自动创建网关，可在防火墙规则中直接选择
 
-# 然后重新加载
+# 方法 B：手动写 gateway router 文件
+echo "172.31.1.2" > /tmp/tun4001_router
 configctl interface routes reconfigure
 
-# 方法 B：使用 pluginctl / configd API
-# 需要调研 OPNsense 是否有更动态的注册方式
+# 方法 C：直接在 config.xml 中添加 gateway_item（参考 Kre3 博客）
 ```
 
-- [ ] 验证网关出现在 System → Gateways
+- [ ] 验证网关出现在 System → Gateways → Status
 - [ ] 验证 dpinger 能监控该网关
 - [ ] 在防火墙规则中选择该网关，验证策略路由生效
+- [ ] 测试 Gateway Group 兼容性（注意：Dynamic gateway policy 网关可能不支持 Gateway Group，需验证）
 
 #### Step 0.5: 端到端测试
 
@@ -297,7 +308,13 @@ os-proxygateway/
 ```
 
 - [ ] 创建 Makefile（参考 os-wireguard 的 Makefile 格式）
-- [ ] 编写 `proxygateway.inc` 注册钩子
+- [ ] 编写 `proxygateway.inc` 注册钩子，实现以下 OPNsense 插件钩子：
+  - `proxygateway_services()` — 注册服务（start/stop/restart）
+  - `proxygateway_devices()` — 注册 tun 虚拟设备（pattern: `^tun_pgw`）
+  - `proxygateway_interfaces()` — 注册虚拟接口
+  - `proxygateway_firewall($fw)` — 注册 NAT 和 DNS 防泄漏规则
+  - `proxygateway_configure()` — 注册启动事件钩子
+  - `proxygateway_syslog()` — 注册日志目标
 - [ ] 编写 `rc.d/proxygateway` 服务脚本
 - [ ] 编写 `actions_proxygateway.conf` (configd action 定义)
 
@@ -421,10 +438,10 @@ configctl proxygateway status
 
 | 风险 | 概率 | 影响 | 缓解措施 | 发现时机 |
 |------|------|------|---------|---------|
-| tun2socks 在 OPNsense 内核上不工作 | 中 | 致命 | Phase 0 立即验证；准备备选方案（hev-socks5-tunnel, badvpn） | PoC |
-| 动态网关注册需要全量 reload | 高 | 高 | 研究 WireGuard 插件如何注册网关，模仿其方式 | PoC |
+| tun2socks 在 OPNsense 内核上不工作 | ~~中~~ → 低 | 致命 | **已有第三方验证**（Kre3 博客）；Phase 0 快速复现即可 | PoC |
+| 动态网关注册需要全量 reload | ~~高~~ → 中 | 高 | **已确认方案**：使用 "Dynamic gateway policy" + `configctl interface routes reconfigure` | PoC |
 | 多实例 pf 规则冲突 | 低 | 高 | 使用 pf anchor 机制隔离每个实例的规则 | Phase 1 |
-| GPL-3.0 不被 OPNsense 接受 | 中 | 中 | tun2socks 作为独立 pkg；插件本身用 BSD 许可 | Phase 2 |
+| ~~GPL-3.0 不被 OPNsense 接受~~ | ~~中~~ → **已消除** | — | tun2socks v2.6.0 已改为 MIT 许可证 | — |
 | 性能不足 | 低 | 中 | PoC 中做性能基准测试；目标 100Mbps+  | PoC |
 | OPNsense 大版本升级 API 变更 | 低 | 中 | 跟踪 OPNsense release notes；MVC 框架相对稳定 | 持续 |
 
@@ -450,11 +467,13 @@ WireGuard 插件也需要动态创建接口和注册网关，它的做法值得�
 
 ### 3. 许可证策略
 
-**建议：插件代码用 BSD-2-Clause，tun2socks 作为 runtime dependency。**
+**建议：插件代码和 tun2socks 均可用 BSD/MIT 兼容许可。**
+
+tun2socks v2.6.0 已改为 MIT 许可证，与 OPNsense 的 BSD 生态完全兼容。可以直接将 tun2socks 二进制打包在插件中，无需拆分为独立包。
 
 ```
 os-proxygateway (BSD-2-Clause)
-  └── depends on: tun2socks (GPL-3.0, separate package)
+  └── bundles: tun2socks binary (MIT)
 ```
 
 ### 4. 开发/测试环境
@@ -482,4 +501,23 @@ Proxmox Host
 
 ---
 
-*这份评估的核心结论：设计方向正确，架构合理，拓展性强。最大的不确定性在于 FreeBSD/OPNsense 上的底层兼容性，因此必须先做 PoC 验证再投入开发。*
+*这份评估的核心结论：设计方向正确，架构合理，拓展性强。核心技术路径已被第三方验证可行，许可证风险已消除，建议快速过 PoC 后直接进入开发。*
+
+---
+
+## 附录：关键参考资料
+
+| 资料 | 说明 |
+|------|------|
+| [Kre3: Setting up tun2socks on OPNsense](https://blog.kre3.net/en/article/setup-tun2socks-in-opnsense/) | **最重要的参考** — 完整的手动设置流程，证明核心概念可行 |
+| [xjasonlyu/tun2socks GitHub](https://github.com/xjasonlyu/tun2socks) | 核心引擎，MIT 许可，FreeBSD 预编译二进制 |
+| [tun2socks v2.6.0 Release](https://github.com/xjasonlyu/tun2socks/releases/tag/v2.6.0) | 最新稳定版，MIT 许可证 |
+| [OPNsense Plugin Hooks 文档](https://docs.opnsense.org/development/backend/legacy.html) | `_devices()`, `_interfaces()`, `_services()` 等钩子说明 |
+| [OPNsense MVC Tutorial (Hello World)](https://docs.opnsense.org/development/examples/helloworld.html) | 插件开发入门教程 |
+| [OPNsense Plugins Repository](https://github.com/opnsense/plugins) | 参考 `net/wireguard` 的实现模式 |
+| [OPNsense configd 文档](https://docs.opnsense.org/development/backend/configd.html) | configd action 定义和使用 |
+| [OPNsense Gateway 文档](https://docs.opnsense.org/manual/gateways.html) | 网关注册、dpinger 监控、Dynamic gateway policy |
+| [sing-box FreeBSD TUN Issue #635](https://github.com/SagerNet/sing-box/issues/635) | sing-box TUN 在 FreeBSD 上已坏且不修（排除备选方案） |
+| [OPNsense Forum: Use SOCKS as gateway](https://forum.opnsense.org/index.php?topic=34058.0) | 社区讨论，验证需求存在 |
+| [sing-box-for-OPNsense](https://github.com/yxzhoubing/sing-box-for-OPNsense) | 社区项目，使用 HTTP 透明代理模式（非 TUN） |
+| [Opnwall GitHub](https://github.com/opnwall) | 维护 Clash/sing-box for OPNsense/pfSense 的社区组织 |
