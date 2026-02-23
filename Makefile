@@ -95,7 +95,8 @@ install-tun2socks:
 	@mkdir -p $(BIN_DIR)
 	@if [ ! -x $(BIN_DIR)/tun2socks ]; then \
 		fetch -o /tmp/tun2socks.zip $(TUN2SOCKS_URL) && \
-		unzip -o /tmp/tun2socks.zip -d $(BIN_DIR)/ && \
+		unzip -o /tmp/tun2socks.zip -d /tmp/ && \
+		mv /tmp/tun2socks-$(PLUGIN_ARCH) $(BIN_DIR)/tun2socks && \
 		chmod +x $(BIN_DIR)/tun2socks && \
 		rm -f /tmp/tun2socks.zip && \
 		echo ">>> tun2socks installed: $$($(BIN_DIR)/tun2socks --version 2>&1 | head -1)"; \
