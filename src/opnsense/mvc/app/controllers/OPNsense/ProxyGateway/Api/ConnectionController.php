@@ -39,15 +39,42 @@ class ConnectionController extends ApiMutableModelControllerBase
 
     /**
      * Search proxy connections.
+     * Enriches model data with runtime connection status from the backend.
      * @return array search results
      */
     public function searchItemAction()
     {
-        return $this->searchBase(
+        $result = $this->searchBase(
             'connections.connection',
             ['enabled', 'name', 'description', 'proxyType', 'proxyServer', 'proxyPort'],
             'name'
         );
+
+        // Fetch runtime status and merge into results
+        $backend = new \OPNsense\Core\Backend();
+        $response = $backend->configdRun('proxygateway status');
+        $runtimeData = json_decode($response, true);
+        $statusMap = [];
+        if (!empty($runtimeData['connections'])) {
+            foreach ($runtimeData['connections'] as $conn) {
+                $statusMap[$conn['name']] = $conn;
+            }
+        }
+
+        if (!empty($result['rows'])) {
+            foreach ($result['rows'] as &$row) {
+                $name = $row['name'] ?? '';
+                if (isset($statusMap[$name])) {
+                    $row['connectionStatus'] = $statusMap[$name]['status'];
+                } elseif (($row['enabled'] ?? '') !== '1') {
+                    $row['connectionStatus'] = 'disabled';
+                } else {
+                    $row['connectionStatus'] = 'not_running';
+                }
+            }
+        }
+
+        return $result;
     }
 
     /**

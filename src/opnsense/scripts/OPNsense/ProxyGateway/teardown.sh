@@ -70,12 +70,14 @@ else
     log_debug "Interface ${IFACE} does not exist — nothing to destroy"
 fi
 
-# Step 4: Clean up config file
+# Step 4: Clean up config and device tracking files
 rm -f "$CONFFILE"
-log_debug "Removed config file"
+rm -f "${RUNDIR}/${NAME}.tundev"
+rm -f "${RUNDIR}/${NAME}.status"
+log_debug "Removed config and tracking files"
 
 # Step 5: Trigger OPNsense route reconfiguration
-/usr/local/sbin/configctl interface routes reconfigure 2>/dev/null || true
+/usr/local/sbin/configctl interface routes reconfigure >/dev/null 2>&1 || true
 log_debug "Triggered route reconfiguration"
 
 log_separator "TEARDOWN COMPLETE"

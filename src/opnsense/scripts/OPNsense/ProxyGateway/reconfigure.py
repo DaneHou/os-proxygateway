@@ -19,6 +19,7 @@ LOGDIR = "/var/log/proxygateway"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SETUP_SCRIPT = os.path.join(SCRIPT_DIR, "setup.sh")
 TEARDOWN_SCRIPT = os.path.join(SCRIPT_DIR, "teardown.sh")
+HEALTHCHECK_SCRIPT = os.path.join(SCRIPT_DIR, "healthcheck.sh")
 
 # Structured log format matching the shell logging library
 LOG_FORMAT = "%(asctime)s [%(levelname)-5s] [%(name)-10s] %(message)s"
@@ -105,15 +106,48 @@ def run_setup(conn):
         cmd.extend(["--loglevel", conn["logLevel"]])
 
     log.info("Starting connection: %s", conn["name"])
+    print(f"  Command: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
+    # Always print stdout (contains setup.sh progress messages)
+    if result.stdout:
+        print(result.stdout.rstrip())
     if result.returncode != 0:
         log.error("Failed to start %s: %s", conn["name"], result.stderr.strip())
+        print(f"ERROR starting {conn['name']} (exit code {result.returncode})")
+        if result.stderr:
+            print(f"STDERR: {result.stderr.rstrip()}")
     else:
         # Log setup output at debug level (it has its own structured logs)
         for line in result.stdout.strip().splitlines():
             log.debug("  %s", line)
         log.info("Started %s successfully", conn["name"])
     return result.returncode
+
+
+def run_healthcheck(conn):
+    """Run a quick health check after starting a connection.
+
+    Tests actual proxy connectivity by sending traffic through the proxy.
+    Only passes a custom target if the user explicitly configured one
+    (non-empty healthCheckTarget). Otherwise the healthcheck script uses
+    its built-in default (http://1.1.1.1/).
+    """
+    name = conn["name"]
+    cmd = ["/bin/sh", HEALTHCHECK_SCRIPT, name]
+    target = conn.get("healthCheckTarget", "")
+    if target:
+        cmd.append(target)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        output = result.stdout.strip()
+        if result.returncode == 0:
+            print(f"  Health check: {output}")
+        else:
+            print(f"  Health check: FAILED — {output}")
+        return result.returncode
+    except subprocess.TimeoutExpired:
+        print(f"  Health check: FAILED — timed out after 15s")
+        return 1
 
 
 def run_teardown(name):
@@ -123,8 +157,13 @@ def run_teardown(name):
         ["/bin/sh", TEARDOWN_SCRIPT, name],
         capture_output=True, text=True
     )
+    if result.stdout:
+        print(result.stdout.rstrip())
     if result.returncode != 0:
         log.error("Failed to stop %s: %s", name, result.stderr.strip())
+        print(f"ERROR stopping {name} (exit code {result.returncode})")
+        if result.stderr:
+            print(f"STDERR: {result.stderr.rstrip()}")
     else:
         for line in result.stdout.strip().splitlines():
             log.debug("  %s", line)
@@ -155,6 +194,16 @@ def main():
     with open(config_path) as f:
         desired_config = json.load(f)
 
+    # Pre-flight checks
+    tun2socks = "/usr/local/bin/tun2socks"
+    if not os.path.isfile(tun2socks):
+        print(f"ERROR: tun2socks binary not found at {tun2socks}")
+        print("Install it with: make install-tun2socks")
+        sys.exit(1)
+    if not os.access(tun2socks, os.X_OK):
+        print(f"ERROR: tun2socks binary is not executable: {tun2socks}")
+        sys.exit(1)
+
     # Initialize logging with configured level
     log_level = desired_config.get("logLevel", "info")
     setup_logging(log_level)
@@ -163,12 +212,20 @@ def main():
 
     # Get desired connections (only enabled ones)
     desired = {}
-    for conn in desired_config.get("connections", []):
+    all_conns = desired_config.get("connections", [])
+    for conn in all_conns:
         if conn.get("enabled", "0") == "1":
             desired[conn["name"]] = conn
 
+    print(f"Desired config: {len(all_conns)} total, {len(desired)} enabled")
+    for name, conn in desired.items():
+        print(f"  {name}: {conn.get('proxyType', '?')}://{conn.get('proxyServer', '?')}:{conn.get('proxyPort', '?')}")
+
     # Get running connections
     running = get_running_connections()
+    print(f"Running connections: {len(running)}")
+    for name in running:
+        print(f"  {name}")
 
     log.info("Desired: %d connection(s) — Running: %d connection(s)",
              len(desired), len(running))
@@ -189,9 +246,10 @@ def main():
     for name in sorted(to_stop | to_restart):
         run_teardown(name)
 
-    # Execute: start new/changed connections
+    # Execute: start new/changed connections, then verify connectivity
     for name in sorted(to_start | to_restart):
-        run_setup(desired[name])
+        if run_setup(desired[name]) == 0:
+            run_healthcheck(desired[name])
 
     # Summary
     unchanged = to_check - to_restart

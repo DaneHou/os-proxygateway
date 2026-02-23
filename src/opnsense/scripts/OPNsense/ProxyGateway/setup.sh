@@ -26,7 +26,7 @@ usage() {
     echo "  --tun-mtu <mtu>          Tunnel MTU (default: 1500)"
     echo "  --dns-mode <mode>        DNS mode: tunnel|custom (default: tunnel)"
     echo "  --dns-server <ip>        Custom DNS server (requires --dns-mode custom)"
-    echo "  --loglevel <level>       Log level: debug|info|warning|error (default: warning)"
+    echo "  --loglevel <level>       Log level: debug|info|warn|error (default: warn)"
     exit 1
 }
 
@@ -46,7 +46,7 @@ TUN_ADDR=""
 TUN_MTU="1500"
 DNS_MODE="tunnel"
 DNS_SERVER=""
-LOGLEVEL="warning"
+LOGLEVEL="warn"
 
 # Parse optional arguments
 while [ $# -gt 0 ]; do
@@ -57,7 +57,14 @@ while [ $# -gt 0 ]; do
         --tun-mtu)    TUN_MTU="$2"; shift 2 ;;
         --dns-mode)   DNS_MODE="$2"; shift 2 ;;
         --dns-server) DNS_SERVER="$2"; shift 2 ;;
-        --loglevel)   LOGLEVEL="$2"; shift 2 ;;
+        --loglevel)
+            # tun2socks uses Go's zap logger: debug|info|warn|error|panic|fatal
+            # Map user-friendly "warning" to "warn" for compatibility
+            case "$2" in
+                warning) LOGLEVEL="warn" ;;
+                *)       LOGLEVEL="$2" ;;
+            esac
+            shift 2 ;;
         *)            echo "Unknown option: $1"; usage ;;
     esac
 done
@@ -72,6 +79,7 @@ IFACE="pgw_${NAME}"
 PIDFILE="${RUNDIR}/${NAME}.pid"
 LOGFILE="${LOGDIR}/${NAME}.log"
 CONFFILE="${RUNDIR}/${NAME}.conf"
+TUNDEVFILE="${RUNDIR}/${NAME}.tundev"
 
 # Ensure directories exist
 mkdir -p "$RUNDIR" "$LOGDIR"
@@ -132,15 +140,51 @@ log_info "Proxy: ${PROXY_TYPE}://${PROXY_ADDR}:${PROXY_PORT}"
 log_info "DNS mode: ${DNS_MODE}${DNS_SERVER:+ (server: $DNS_SERVER)}"
 
 # Step 1: Create tun device
-log_info "Creating tun device ${IFACE}..."
-ifconfig "$IFACE" create 2>/dev/null || true
+# On FreeBSD, tun devices must be created via the tun cloner, then renamed.
+# "ifconfig <custom_name> create" does NOT work for tun devices.
+# We create a tunN device, rename it, and pass the original name to tun2socks
+# so it can open /dev/tunN (which still exists after renaming).
+TUN_DEV=""
+if ifconfig "$IFACE" >/dev/null 2>&1; then
+    log_info "Interface $IFACE already exists"
+    if [ -f "$TUNDEVFILE" ]; then
+        TUN_DEV=$(cat "$TUNDEVFILE")
+        log_debug "Using saved tun device: $TUN_DEV"
+    else
+        log_info "No saved tun device found, recreating..."
+        ifconfig "$IFACE" destroy 2>/dev/null || true
+    fi
+fi
+
+if [ -z "$TUN_DEV" ] || ! [ -c "/dev/${TUN_DEV}" ]; then
+    log_info "Creating tun device..."
+    TUN_DEV=$(ifconfig tun create)
+    if [ -z "$TUN_DEV" ]; then
+        log_error "Failed to create tun device"
+        exit 1
+    fi
+    log_debug "Created $TUN_DEV, renaming to $IFACE..."
+    ifconfig "$TUN_DEV" name "$IFACE" || {
+        log_error "Failed to rename $TUN_DEV to $IFACE"
+        ifconfig "$TUN_DEV" destroy 2>/dev/null || true
+        exit 1
+    }
+    echo "$TUN_DEV" > "$TUNDEVFILE"
+fi
+
+# Add to proxygateway interface group
+ifconfig "$IFACE" group proxygateway 2>/dev/null || true
+
+log_info "Configuring $IFACE: ${TUN_LOCAL} <-> ${TUN_PEER} mtu ${TUN_MTU}"
 ifconfig "$IFACE" inet "$TUN_LOCAL" "$TUN_PEER" mtu "$TUN_MTU" up
 log_debug "Device ${IFACE} configured: ${TUN_LOCAL}/${TUN_PEER}"
 
 # Step 2: Start tun2socks
-log_info "Starting tun2socks (loglevel: ${LOGLEVEL})..."
+# Pass the original tun device name (e.g., tun0) so tun2socks opens /dev/tun0.
+# The /dev/tunN node persists even after the interface is renamed to pgw_xxx.
+log_info "Starting tun2socks (device=$TUN_DEV, loglevel: ${LOGLEVEL})..."
 $TUN2SOCKS \
-    -device "$IFACE" \
+    -device "$TUN_DEV" \
     -proxy "$PROXY_URL" \
     -loglevel "$LOGLEVEL" \
     >> "$LOGFILE" 2>&1 &
@@ -153,7 +197,8 @@ log_debug "tun2socks spawned with PID $T2S_PID"
 sleep 1
 if ! kill -0 "$T2S_PID" 2>/dev/null; then
     log_error "tun2socks failed to start — check ${LOGFILE} for details"
-    rm -f "$PIDFILE"
+    tail -20 "$LOGFILE" 2>/dev/null || true
+    rm -f "$PIDFILE" "$TUNDEVFILE"
     ifconfig "$IFACE" destroy 2>/dev/null || true
     exit 1
 fi
@@ -162,13 +207,15 @@ fi
 echo "$TUN_PEER" > "/tmp/${IFACE}_router"
 log_debug "Wrote router file: /tmp/${IFACE}_router -> ${TUN_PEER}"
 
-# Step 4: Save connection config for status/teardown
+# Step 4: Save connection config for status/teardown/healthcheck
 cat > "$CONFFILE" <<EOF
 NAME="${NAME}"
 IFACE="${IFACE}"
+TUN_DEV="${TUN_DEV}"
 PROXY_TYPE="${PROXY_TYPE}"
 PROXY_ADDR="${PROXY_ADDR}"
 PROXY_PORT="${PROXY_PORT}"
+PROXY_URL="${PROXY_URL}"
 TUN_LOCAL="${TUN_LOCAL}"
 TUN_PEER="${TUN_PEER}"
 TUN_MTU="${TUN_MTU}"
@@ -179,7 +226,7 @@ EOF
 log_debug "Saved connection config to ${CONFFILE}"
 
 # Step 5: Trigger OPNsense route reconfiguration
-/usr/local/sbin/configctl interface routes reconfigure 2>/dev/null || true
+/usr/local/sbin/configctl interface routes reconfigure >/dev/null 2>&1 || true
 log_debug "Triggered route reconfiguration"
 
 log_info "Gateway peer: $TUN_PEER | PID: $T2S_PID"
