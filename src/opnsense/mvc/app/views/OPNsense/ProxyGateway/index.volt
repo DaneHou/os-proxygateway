@@ -65,9 +65,9 @@
         // Toggle auth fields visibility
         function toggleAuthFields() {
             if ($('#connection\\.authEnabled').is(':checked')) {
-                $('.auth-fields').show();
+                $('.auth_fields').closest('tr').show();
             } else {
-                $('.auth-fields').hide();
+                $('.auth_fields').closest('tr').hide();
             }
         }
         $(document).on('change', '#connection\\.authEnabled', toggleAuthFields);
@@ -75,9 +75,9 @@
         // Toggle DNS fields visibility
         function toggleDnsFields() {
             if ($('#connection\\.dnsMode').val() === 'custom') {
-                $('.dns-custom-fields').show();
+                $('.dns_custom_fields').closest('tr').show();
             } else {
-                $('.dns-custom-fields').hide();
+                $('.dns_custom_fields').closest('tr').hide();
             }
         }
         $(document).on('change', '#connection\\.dnsMode', toggleDnsFields);
@@ -85,9 +85,9 @@
         // Toggle health check fields visibility
         function toggleHealthFields() {
             if ($('#connection\\.healthCheckEnabled').is(':checked')) {
-                $('.health-fields').show();
+                $('.health_fields').closest('tr').show();
             } else {
-                $('.health-fields').hide();
+                $('.health_fields').closest('tr').hide();
             }
         }
         $(document).on('change', '#connection\\.healthCheckEnabled', toggleHealthFields);
