@@ -47,7 +47,7 @@ install-plugin:
 	# MVC controllers
 	@mkdir -p $(MVC_DIR)/controllers/OPNsense/ProxyGateway/Api
 	@mkdir -p $(MVC_DIR)/controllers/OPNsense/ProxyGateway/forms
-	@cp src/opnsense/mvc/app/controllers/OPNsense/ProxyGateway/IndexController.php \
+	@cp src/opnsense/mvc/app/controllers/OPNsense/ProxyGateway/*.php \
 		$(MVC_DIR)/controllers/OPNsense/ProxyGateway/
 	@cp src/opnsense/mvc/app/controllers/OPNsense/ProxyGateway/Api/*.php \
 		$(MVC_DIR)/controllers/OPNsense/ProxyGateway/Api/

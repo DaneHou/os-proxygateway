@@ -1,8 +1,15 @@
 #!/bin/sh
 
-# healthcheck.sh — Probe connectivity through a proxy gateway tunnel
+# healthcheck.sh — Probe connectivity through a proxy gateway connection
 # Called periodically by cron or configd
 # Exit code: 0 = healthy, 1 = unhealthy
+#
+# Tests connectivity by sending traffic THROUGH the proxy server to a target.
+# Uses curl --proxy to route through the actual SOCKS5/HTTP proxy, which
+# verifies the entire chain: proxy reachable → proxy forwards → target responds.
+#
+# Default target is http://1.1.1.1/ (Cloudflare anycast, returns HTTP 301).
+# IP-based to avoid DNS dependency. Universally reachable regardless of country.
 
 SCRIPT_DIR=$(dirname "$0")
 RUNDIR="/var/run/proxygateway"
@@ -11,8 +18,11 @@ LOGDIR="/var/log/proxygateway"
 # Source structured logging library
 . "${SCRIPT_DIR}/lib/logging.sh"
 
+# Default probe target: Cloudflare anycast IP (returns 301, no DNS needed)
+DEFAULT_TARGET="http://1.1.1.1/"
+
 NAME="$1"
-TARGET="${2:-http://cp.cloudflare.com}"
+TARGET="${2:-$DEFAULT_TARGET}"
 TIMEOUT="${3:-5}"
 
 if [ -z "$NAME" ]; then
@@ -64,40 +74,52 @@ if ! ifconfig "$IFACE" >/dev/null 2>&1; then
     exit 1
 fi
 
-# Probe connectivity through the tunnel
-# Use curl with --interface to force traffic through the tunnel IP
-log_debug "Probing ${TARGET} via ${TUN_LOCAL}..."
+# --- Connectivity probe through the proxy server ---
+# Build a curl-compatible proxy URL. Use --proxy so traffic goes through the
+# actual SOCKS5/HTTP proxy, verifying the chain: proxy reachable → proxy forwards.
+case "$PROXY_TYPE" in
+    socks5|socks5tls) CURL_PROXY="socks5h://${PROXY_ADDR}:${PROXY_PORT}" ;;
+    http|https)       CURL_PROXY="http://${PROXY_ADDR}:${PROXY_PORT}" ;;
+    *)                CURL_PROXY="socks5h://${PROXY_ADDR}:${PROXY_PORT}" ;;
+esac
+
+log_debug "Probing ${TARGET} via proxy ${CURL_PROXY}..."
 START_MS=$(date +%s%N 2>/dev/null || echo "0")
-RESULT=$(curl -s -o /dev/null -w "%{http_code}" \
-    --interface "$TUN_LOCAL" \
+
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+    --proxy "$CURL_PROXY" \
     --connect-timeout "$TIMEOUT" \
     --max-time "$TIMEOUT" \
     "$TARGET" 2>/dev/null)
+
 END_MS=$(date +%s%N 2>/dev/null || echo "0")
 
-if [ "$RESULT" = "200" ] || [ "$RESULT" = "204" ] || [ "$RESULT" = "301" ] || [ "$RESULT" = "302" ]; then
-    # Calculate latency in milliseconds
-    if [ "$START_MS" != "0" ] && [ "$END_MS" != "0" ]; then
-        LATENCY_NS=$((END_MS - START_MS))
-        LATENCY_MS=$((LATENCY_NS / 1000000))
-    else
-        LATENCY_MS="-1"
-    fi
+# Calculate latency
+LATENCY_MS="-1"
+if [ "$START_MS" != "0" ] && [ "$END_MS" != "0" ]; then
+    LATENCY_NS=$((END_MS - START_MS))
+    LATENCY_MS=$((LATENCY_NS / 1000000))
+fi
 
-    log_info "Healthy — HTTP $RESULT, latency ${LATENCY_MS}ms"
+PROBE_DETAIL="via=${CURL_PROXY} target=${TARGET} http=${HTTP_CODE}"
+
+# Any HTTP response (even 4xx/5xx) means the proxy forwarded the request.
+# Only 000 means the proxy itself is unreachable or not working.
+if [ "$HTTP_CODE" != "000" ] && [ -n "$HTTP_CODE" ]; then
+    log_info "Healthy — HTTP ${HTTP_CODE}, ${LATENCY_MS}ms (${PROBE_DETAIL})"
     cat > "$STATUSFILE" <<EOF
 status=up
-http_code=${RESULT}
+probe=${PROBE_DETAIL}
 latency_ms=${LATENCY_MS}
 timestamp=$(date +%s)
 EOF
     exit 0
 else
-    log_warning "Probe failed — HTTP $RESULT"
+    log_warning "Proxy unreachable — ${PROBE_DETAIL}"
     cat > "$STATUSFILE" <<EOF
 status=down
-http_code=${RESULT}
-reason=probe_failed
+probe=${PROBE_DETAIL}
+reason=proxy_unreachable
 timestamp=$(date +%s)
 EOF
     exit 1

@@ -103,16 +103,4 @@ class ServiceController extends ApiMutableServiceControllerBase
         return $result;
     }
 
-    /**
-     * Get status of all connections.
-     * @return array status data
-     */
-    public function statusAction()
-    {
-        $backend = new \OPNsense\Core\Backend();
-        $response = $backend->configdRun('proxygateway status');
-        $data = json_decode($response, true);
-
-        return ['status' => 'ok', 'data' => $data ?: []];
-    }
 }
