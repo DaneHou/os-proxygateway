@@ -1,9 +1,0 @@
-<acl>
-    <page-services-proxygateway>
-        <name>Services: Proxy Gateway</name>
-        <patterns>
-            <pattern>ui/proxygateway/*</pattern>
-            <pattern>api/proxygateway/*</pattern>
-        </patterns>
-    </page-services-proxygateway>
-</acl>

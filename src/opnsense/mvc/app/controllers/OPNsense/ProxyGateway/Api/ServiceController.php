@@ -88,7 +88,12 @@ class ServiceController extends ApiMutableServiceControllerBase
             file_put_contents('/var/run/proxygateway/desired.json', $configJson);
 
             $backend = new \OPNsense\Core\Backend();
-            $response = trim($backend->configdRun('proxygateway reconfigure'));
+
+            // Re-register interfaces so OPNsense picks up new/removed devices
+            $backend->configdRun('interface invoke registration');
+
+            // Apply the desired config
+            $response = trim($backend->configdpRun('proxygateway reconfigure'));
 
             $result = ['status' => 'ok', 'response' => $response];
         }

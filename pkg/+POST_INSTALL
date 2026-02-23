@@ -9,10 +9,13 @@ mkdir -p /var/log/proxygateway
 # Set script permissions
 chmod +x /usr/local/opnsense/scripts/OPNsense/ProxyGateway/*.sh
 chmod +x /usr/local/opnsense/scripts/OPNsense/ProxyGateway/*.py
-chmod +x /usr/local/etc/rc.d/proxygateway
+chmod +x /usr/local/etc/rc.d/opnsense-proxygateway
 
 # Enable the service
 sysrc proxygateway_enable=YES 2>/dev/null || true
+
+# Register interface group
+/usr/local/sbin/configctl interface invoke registration 2>/dev/null || true
 
 # Reload configd to pick up new actions
 /usr/local/sbin/configctl configd actions 2>/dev/null || true
