@@ -11,11 +11,11 @@
                 <Required>Y</Required>
             </enabled>
             <logLevel type="OptionField">
-                <default>warning</default>
+                <default>warn</default>
                 <OptionValues>
                     <debug>Debug</debug>
                     <info>Info</info>
-                    <warning>Warning</warning>
+                    <warn>Warning</warn>
                     <error>Error</error>
                 </OptionValues>
             </logLevel>
@@ -116,8 +116,9 @@
                 </healthCheckInterval>
 
                 <healthCheckTarget type="TextField">
-                    <default>http://cp.cloudflare.com</default>
+                    <default></default>
                     <Required>N</Required>
+                    <ValidationMessage>Optional HTTP URL for health check (leave empty for default TCP probe to anycast DNS IPs)</ValidationMessage>
                 </healthCheckTarget>
 
                 <!-- Gateway settings -->

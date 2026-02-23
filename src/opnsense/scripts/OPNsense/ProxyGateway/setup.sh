@@ -23,7 +23,7 @@ usage() {
     echo "  --tun-mtu <mtu>          Tunnel MTU (default: 1500)"
     echo "  --dns-mode <mode>        DNS mode: tunnel|custom (default: tunnel)"
     echo "  --dns-server <ip>        Custom DNS server (requires --dns-mode custom)"
-    echo "  --loglevel <level>       Log level: debug|info|warning|error (default: warning)"
+    echo "  --loglevel <level>       Log level: debug|info|warn|error (default: warn)"
     exit 1
 }
 
@@ -43,7 +43,7 @@ TUN_ADDR=""
 TUN_MTU="1500"
 DNS_MODE="tunnel"
 DNS_SERVER=""
-LOGLEVEL="warning"
+LOGLEVEL="warn"
 
 # Parse optional arguments
 while [ $# -gt 0 ]; do
@@ -54,7 +54,14 @@ while [ $# -gt 0 ]; do
         --tun-mtu)    TUN_MTU="$2"; shift 2 ;;
         --dns-mode)   DNS_MODE="$2"; shift 2 ;;
         --dns-server) DNS_SERVER="$2"; shift 2 ;;
-        --loglevel)   LOGLEVEL="$2"; shift 2 ;;
+        --loglevel)
+            # tun2socks uses Go's zap logger: debug|info|warn|error|panic|fatal
+            # Map user-friendly "warning" to "warn" for compatibility
+            case "$2" in
+                warning) LOGLEVEL="warn" ;;
+                *)       LOGLEVEL="$2" ;;
+            esac
+            shift 2 ;;
         *)            echo "Unknown option: $1"; usage ;;
     esac
 done
