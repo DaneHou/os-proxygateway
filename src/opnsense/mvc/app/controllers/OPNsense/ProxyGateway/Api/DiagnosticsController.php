@@ -34,15 +34,61 @@ class DiagnosticsController extends ApiControllerBase
 {
     /**
      * Get full status of all proxy gateway connections.
+     * Merges runtime status with configured connections so that
+     * connections that are configured but not running are also shown.
      * @return array connection statuses
      */
     public function getStatusAction()
     {
+        // Get runtime status from backend
         $backend = new \OPNsense\Core\Backend();
         $response = $backend->configdRun('proxygateway status');
-        $data = json_decode($response, true);
+        $runtimeData = json_decode($response, true);
+        $runtimeMap = [];
+        if (!empty($runtimeData['connections'])) {
+            foreach ($runtimeData['connections'] as $conn) {
+                $runtimeMap[$conn['name']] = $conn;
+            }
+        }
 
-        return ['status' => 'ok', 'data' => $data ?: ['connections' => []]];
+        // Merge with configured connections from model
+        $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
+        $connections = [];
+        foreach ($mdl->connections->connection->iterateItems() as $uuid => $conn) {
+            $name = (string)$conn->name;
+            if (isset($runtimeMap[$name])) {
+                $entry = $runtimeMap[$name];
+                $entry['configured'] = true;
+                $entry['enabled'] = (string)$conn->enabled;
+                $connections[] = $entry;
+                unset($runtimeMap[$name]);
+            } else {
+                $connections[] = [
+                    'name'            => $name,
+                    'interface'       => 'pgw_' . $name,
+                    'proxy_type'      => (string)$conn->proxyType,
+                    'proxy_addr'      => (string)$conn->proxyServer,
+                    'proxy_port'      => (string)$conn->proxyPort,
+                    'tun_local'       => '-',
+                    'tun_peer'        => '-',
+                    'pid'             => null,
+                    'process_alive'   => false,
+                    'interface_exists' => false,
+                    'status'          => (string)$conn->enabled === '1' ? 'not_running' : 'disabled',
+                    'health'          => [],
+                    'configured'      => true,
+                    'enabled'         => (string)$conn->enabled,
+                ];
+            }
+        }
+
+        // Include any orphaned runtime connections (running but removed from config)
+        foreach ($runtimeMap as $conn) {
+            $conn['configured'] = false;
+            $connections[] = $conn;
+        }
+
+        return ['status' => 'ok', 'data' => ['connections' => $connections]];
     }
 
     /**
