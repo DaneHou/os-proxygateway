@@ -1,0 +1,14 @@
+<form>
+    <field>
+        <id>general.enabled</id>
+        <label>Enable Proxy Gateway</label>
+        <type>checkbox</type>
+        <help>Enable or disable the Proxy Gateway service globally.</help>
+    </field>
+    <field>
+        <id>general.logLevel</id>
+        <label>Log Level</label>
+        <type>dropdown</type>
+        <help>Default log level for all proxy gateway connections.</help>
+    </field>
+</form>

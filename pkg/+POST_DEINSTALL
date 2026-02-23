@@ -1,0 +1,23 @@
+#!/bin/sh
+
+# Post-deinstall script for os-proxygateway
+
+# Stop all running connections
+if [ -d /var/run/proxygateway ]; then
+    for conf in /var/run/proxygateway/*.conf; do
+        [ -f "$conf" ] || continue
+        name=$(basename "$conf" .conf)
+        /bin/sh /usr/local/opnsense/scripts/OPNsense/ProxyGateway/teardown.sh "$name" 2>/dev/null || true
+    done
+fi
+
+# Clean up runtime state
+rm -rf /var/run/proxygateway
+
+# Disable the service
+sysrc -x proxygateway_enable 2>/dev/null || true
+
+# Reload configd
+/usr/local/sbin/configctl configd actions 2>/dev/null || true
+
+echo "os-proxygateway has been removed."

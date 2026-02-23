@@ -1,0 +1,8 @@
+<menu>
+    <Services>
+        <ProxyGateway VisibleName="Proxy Gateway" cssClass="fa fa-exchange fa-fw" order="70">
+            <Connections VisibleName="Connections" url="/ui/proxygateway" order="10"/>
+            <Diagnostics VisibleName="Diagnostics" url="/ui/proxygateway/diagnostics" order="20"/>
+        </ProxyGateway>
+    </Services>
+</menu>

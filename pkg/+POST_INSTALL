@@ -1,0 +1,31 @@
+#!/bin/sh
+
+# Post-install script for os-proxygateway
+
+# Create runtime directories
+mkdir -p /var/run/proxygateway
+mkdir -p /var/log/proxygateway
+
+# Set script permissions
+chmod +x /usr/local/opnsense/scripts/OPNsense/ProxyGateway/*.sh
+chmod +x /usr/local/opnsense/scripts/OPNsense/ProxyGateway/*.py
+chmod +x /usr/local/etc/rc.d/opnsense-proxygateway
+
+# Enable the service
+sysrc proxygateway_enable=YES 2>/dev/null || true
+
+# Register interface group
+/usr/local/sbin/configctl interface invoke registration 2>/dev/null || true
+
+# Reload configd to pick up new actions
+/usr/local/sbin/configctl configd actions 2>/dev/null || true
+
+echo "os-proxygateway installed successfully."
+echo ""
+echo "Next steps:"
+echo "  1. Download tun2socks binary:"
+echo "     fetch -o /usr/local/bin/tun2socks https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-freebsd-amd64.zip"
+echo "     unzip /usr/local/bin/tun2socks-freebsd-amd64.zip -d /usr/local/bin/"
+echo "     chmod +x /usr/local/bin/tun2socks"
+echo "  2. Go to Services → Proxy Gateway to configure connections"
+echo "  3. Enable the service and add your first proxy connection"
