@@ -80,19 +80,29 @@ def run_setup(conn):
 
 
 def run_healthcheck(conn):
-    """Run a quick health check after starting a connection."""
+    """Run a quick health check after starting a connection.
+
+    Tests actual proxy connectivity by sending traffic through the proxy.
+    Only passes a custom target if the user explicitly configured one
+    (non-empty healthCheckTarget). Otherwise the healthcheck script uses
+    its built-in default (http://1.1.1.1/).
+    """
     name = conn["name"]
-    target = conn.get("healthCheckTarget", "")
     cmd = ["/bin/sh", HEALTHCHECK_SCRIPT, name]
+    target = conn.get("healthCheckTarget", "")
     if target:
         cmd.append(target)
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-    output = result.stdout.strip()
-    if result.returncode == 0:
-        print(f"  Health check: {output}")
-    else:
-        print(f"  Health check: FAILED — {output}")
-    return result.returncode
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        output = result.stdout.strip()
+        if result.returncode == 0:
+            print(f"  Health check: {output}")
+        else:
+            print(f"  Health check: FAILED — {output}")
+        return result.returncode
+    except subprocess.TimeoutExpired:
+        print(f"  Health check: FAILED — timed out after 15s")
+        return 1
 
 
 def run_teardown(name):
