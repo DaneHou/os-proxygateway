@@ -18,6 +18,7 @@ RUNDIR = "/var/run/proxygateway"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SETUP_SCRIPT = os.path.join(SCRIPT_DIR, "setup.sh")
 TEARDOWN_SCRIPT = os.path.join(SCRIPT_DIR, "teardown.sh")
+HEALTHCHECK_SCRIPT = os.path.join(SCRIPT_DIR, "healthcheck.sh")
 
 
 def get_running_connections():
@@ -75,6 +76,22 @@ def run_setup(conn):
         print(f"ERROR starting {conn['name']} (exit code {result.returncode})")
         if result.stderr:
             print(f"STDERR: {result.stderr.rstrip()}")
+    return result.returncode
+
+
+def run_healthcheck(conn):
+    """Run a quick health check after starting a connection."""
+    name = conn["name"]
+    target = conn.get("healthCheckTarget", "")
+    cmd = ["/bin/sh", HEALTHCHECK_SCRIPT, name]
+    if target:
+        cmd.append(target)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    output = result.stdout.strip()
+    if result.returncode == 0:
+        print(f"  Health check: {output}")
+    else:
+        print(f"  Health check: FAILED — {output}")
     return result.returncode
 
 
@@ -159,9 +176,10 @@ def main():
     for name in to_stop | to_restart:
         run_teardown(name)
 
-    # Execute: start new/changed connections
+    # Execute: start new/changed connections, then verify connectivity
     for name in to_start | to_restart:
-        run_setup(desired[name])
+        if run_setup(desired[name]) == 0:
+            run_healthcheck(desired[name])
 
     # Summary
     unchanged = to_check - to_restart

@@ -58,6 +58,17 @@ def get_status():
         iface_exists = os.path.exists(f"/dev/{iface}") or \
             os.system(f"ifconfig {iface} >/dev/null 2>&1") == 0
 
+        # Determine status using both process state and health check results.
+        # Process/interface down = definitely down.
+        # Process alive but health check failed = degraded (proxy unreachable).
+        # Process alive, no health data yet = up (just started, not checked yet).
+        if not process_alive or not iface_exists:
+            status = "down"
+        elif health.get("status") == "down":
+            status = "degraded"
+        else:
+            status = "up"
+
         conn_status = {
             "name": name,
             "interface": iface,
@@ -69,7 +80,7 @@ def get_status():
             "pid": pid,
             "process_alive": process_alive,
             "interface_exists": iface_exists,
-            "status": "up" if process_alive and iface_exists else "down",
+            "status": status,
             "health": health,
         }
         connections.append(conn_status)
