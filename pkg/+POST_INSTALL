@@ -10,6 +10,8 @@ mkdir -p /var/log/proxygateway
 chmod +x /usr/local/opnsense/scripts/OPNsense/ProxyGateway/*.sh
 chmod +x /usr/local/opnsense/scripts/OPNsense/ProxyGateway/*.py
 chmod +x /usr/local/etc/rc.d/opnsense-proxygateway
+# Logging library is sourced, not executed, but keep consistent
+chmod +r /usr/local/opnsense/scripts/OPNsense/ProxyGateway/lib/*.sh
 
 # Enable the service
 sysrc proxygateway_enable=YES 2>/dev/null || true

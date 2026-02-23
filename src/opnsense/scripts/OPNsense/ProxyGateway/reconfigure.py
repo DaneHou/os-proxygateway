@@ -9,22 +9,61 @@ stops removed ones, and restarts changed ones.
 """
 
 import json
+import logging
 import os
 import subprocess
 import sys
-import glob
 
 RUNDIR = "/var/run/proxygateway"
+LOGDIR = "/var/log/proxygateway"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SETUP_SCRIPT = os.path.join(SCRIPT_DIR, "setup.sh")
 TEARDOWN_SCRIPT = os.path.join(SCRIPT_DIR, "teardown.sh")
+
+# Structured log format matching the shell logging library
+LOG_FORMAT = "%(asctime)s [%(levelname)-5s] [%(name)-10s] %(message)s"
+LOG_DATEFMT = "%Y-%m-%dT%H:%M:%SZ"
+
+
+def setup_logging(log_level="info"):
+    """Configure structured logging to stdout and aggregate log file."""
+    level = getattr(logging, log_level.upper(), logging.INFO)
+
+    formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATEFMT)
+    formatter.converter = lambda *args: __import__("time").gmtime()
+
+    # Console handler
+    console = logging.StreamHandler(sys.stdout)
+    console.setFormatter(formatter)
+
+    # File handler — aggregate reconfigure log
+    os.makedirs(LOGDIR, exist_ok=True)
+    file_handler = logging.FileHandler(
+        os.path.join(LOGDIR, "reconfigure.log"), mode="a"
+    )
+    file_handler.setFormatter(formatter)
+
+    root = logging.getLogger()
+    root.setLevel(level)
+    root.addHandler(console)
+    root.addHandler(file_handler)
+
+
+log = logging.getLogger("reconfig")
 
 
 def get_running_connections():
     """Get dict of currently running connections from .conf files."""
     running = {}
-    for conf_path in glob.glob(os.path.join(RUNDIR, "*.conf")):
-        name = os.path.basename(conf_path).replace(".conf", "")
+    conf_dir = RUNDIR
+    if not os.path.isdir(conf_dir):
+        return running
+
+    for entry in sorted(os.listdir(conf_dir)):
+        if not entry.endswith(".conf"):
+            continue
+        conf_path = os.path.join(conf_dir, entry)
+        name = entry.replace(".conf", "")
         config = {}
         with open(conf_path) as f:
             for line in f:
@@ -65,26 +104,31 @@ def run_setup(conn):
     if conn.get("logLevel"):
         cmd.extend(["--loglevel", conn["logLevel"]])
 
-    print(f"Starting connection: {conn['name']}")
+    log.info("Starting connection: %s", conn["name"])
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"ERROR starting {conn['name']}: {result.stderr}")
+        log.error("Failed to start %s: %s", conn["name"], result.stderr.strip())
     else:
-        print(result.stdout)
+        # Log setup output at debug level (it has its own structured logs)
+        for line in result.stdout.strip().splitlines():
+            log.debug("  %s", line)
+        log.info("Started %s successfully", conn["name"])
     return result.returncode
 
 
 def run_teardown(name):
     """Stop a connection using teardown.sh."""
-    print(f"Stopping connection: {name}")
+    log.info("Stopping connection: %s", name)
     result = subprocess.run(
         ["/bin/sh", TEARDOWN_SCRIPT, name],
         capture_output=True, text=True
     )
     if result.returncode != 0:
-        print(f"ERROR stopping {name}: {result.stderr}")
+        log.error("Failed to stop %s: %s", name, result.stderr.strip())
     else:
-        print(result.stdout)
+        for line in result.stdout.strip().splitlines():
+            log.debug("  %s", line)
+        log.info("Stopped %s successfully", name)
     return result.returncode
 
 
@@ -111,6 +155,12 @@ def main():
     with open(config_path) as f:
         desired_config = json.load(f)
 
+    # Initialize logging with configured level
+    log_level = desired_config.get("logLevel", "info")
+    setup_logging(log_level)
+
+    log.info("──── BEGIN RECONFIGURE ────")
+
     # Get desired connections (only enabled ones)
     desired = {}
     for conn in desired_config.get("connections", []):
@@ -119,6 +169,9 @@ def main():
 
     # Get running connections
     running = get_running_connections()
+
+    log.info("Desired: %d connection(s) — Running: %d connection(s)",
+             len(desired), len(running))
 
     # Determine actions
     to_stop = set(running.keys()) - set(desired.keys())
@@ -129,28 +182,35 @@ def main():
     to_restart = set()
     for name in to_check:
         if connection_changed(desired[name], running[name]):
+            log.info("Config changed for '%s' — will restart", name)
             to_restart.add(name)
 
     # Execute: stop removed/changed connections
-    for name in to_stop | to_restart:
+    for name in sorted(to_stop | to_restart):
         run_teardown(name)
 
     # Execute: start new/changed connections
-    for name in to_start | to_restart:
+    for name in sorted(to_start | to_restart):
         run_setup(desired[name])
 
     # Summary
     unchanged = to_check - to_restart
+    parts = []
     if unchanged:
-        print(f"Unchanged: {', '.join(sorted(unchanged))}")
+        parts.append(f"unchanged={','.join(sorted(unchanged))}")
     if to_start:
-        print(f"Started: {', '.join(sorted(to_start))}")
+        parts.append(f"started={','.join(sorted(to_start))}")
     if to_stop:
-        print(f"Stopped: {', '.join(sorted(to_stop))}")
+        parts.append(f"stopped={','.join(sorted(to_stop))}")
     if to_restart:
-        print(f"Restarted: {', '.join(sorted(to_restart))}")
+        parts.append(f"restarted={','.join(sorted(to_restart))}")
 
-    print("Reconfiguration complete.")
+    if parts:
+        log.info("Summary: %s", " | ".join(parts))
+    else:
+        log.info("Summary: no connections configured")
+
+    log.info("──── RECONFIGURE COMPLETE ────")
 
 
 if __name__ == "__main__":
