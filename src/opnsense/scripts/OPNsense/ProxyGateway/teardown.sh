@@ -5,8 +5,12 @@
 
 set -e
 
+SCRIPT_DIR=$(dirname "$0")
 RUNDIR="/var/run/proxygateway"
 LOGDIR="/var/log/proxygateway"
+
+# Source structured logging library
+. "${SCRIPT_DIR}/lib/logging.sh"
 
 NAME="$1"
 
@@ -18,14 +22,19 @@ fi
 IFACE="pgw_${NAME}"
 PIDFILE="${RUNDIR}/${NAME}.pid"
 CONFFILE="${RUNDIR}/${NAME}.conf"
+LOGFILE="${LOGDIR}/${NAME}.log"
 
-echo "=== Tearing down proxy gateway: $NAME ==="
+# Initialize structured logging
+log_init "teardown" "$NAME" "info"
+log_set_file "$LOGFILE"
+
+log_separator "BEGIN TEARDOWN"
 
 # Step 1: Kill tun2socks process
 if [ -f "$PIDFILE" ]; then
     PID=$(cat "$PIDFILE")
     if kill -0 "$PID" 2>/dev/null; then
-        echo "Stopping tun2socks (PID: $PID)..."
+        log_info "Stopping tun2socks (PID: $PID)..."
         kill "$PID"
         # Wait for graceful shutdown (max 5 seconds)
         WAIT=0
@@ -35,27 +44,38 @@ if [ -f "$PIDFILE" ]; then
         done
         # Force kill if still running
         if kill -0 "$PID" 2>/dev/null; then
-            echo "Force killing tun2socks..."
+            log_warning "Graceful shutdown timed out — force killing tun2socks"
             kill -9 "$PID" 2>/dev/null || true
+        else
+            log_info "tun2socks stopped gracefully"
         fi
+    else
+        log_warning "PID file exists but process $PID is not running"
     fi
     rm -f "$PIDFILE"
+else
+    log_info "No PID file found — process may already be stopped"
 fi
 
 # Step 2: Remove router file (deregisters gateway)
 rm -f "/tmp/${IFACE}_router"
 rm -f "/tmp/${IFACE}_routerv6"
+log_debug "Removed router files"
 
 # Step 3: Destroy tun interface
 if ifconfig "$IFACE" >/dev/null 2>&1; then
-    echo "Destroying interface ${IFACE}..."
+    log_info "Destroying interface ${IFACE}..."
     ifconfig "$IFACE" destroy
+else
+    log_debug "Interface ${IFACE} does not exist — nothing to destroy"
 fi
 
 # Step 4: Clean up config file
 rm -f "$CONFFILE"
+log_debug "Removed config file"
 
 # Step 5: Trigger OPNsense route reconfiguration
 /usr/local/sbin/configctl interface routes reconfigure 2>/dev/null || true
+log_debug "Triggered route reconfiguration"
 
-echo "=== Proxy gateway '$NAME' is DOWN ==="
+log_separator "TEARDOWN COMPLETE"

@@ -25,11 +25,11 @@
 
                         var row = '<tr>' +
                             '<td>' + conn.name + '</td>' +
-                            '<td>' + conn.interface + '</td>' +
+                            '<td><code>' + conn.interface + '</code></td>' +
                             '<td>' + conn.proxy_type.toUpperCase() + '://' + conn.proxy_addr + ':' + conn.proxy_port + '</td>' +
                             '<td>' + statusIcon + '</td>' +
                             '<td>' + latency + '</td>' +
-                            '<td>' + conn.tun_local + ' &lt;-&gt; ' + conn.tun_peer + '</td>' +
+                            '<td><code>' + conn.tun_local + '</code> &harr; <code>' + conn.tun_peer + '</code></td>' +
                             '<td>' + (conn.pid || '-') + '</td>' +
                             '<td>' +
                                 '<button class="btn btn-xs btn-default btn-test" data-name="' + conn.name + '">' +
@@ -66,27 +66,92 @@
             });
         });
 
+        // Populate the log filter dropdown from available log files
+        function populateLogFilter() {
+            ajaxGet('/api/proxygateway/diagnostics/getLogConnections', {}, function(data, status) {
+                var select = $('#log-filter-name');
+                var currentVal = select.val();
+                select.find('option:not(:first)').remove();
+                if (data.connections) {
+                    $.each(data.connections, function(idx, name) {
+                        select.append('<option value="' + name + '">' + name + '</option>');
+                    });
+                }
+                // Restore previous selection if still exists
+                if (currentVal) {
+                    select.val(currentVal);
+                }
+                select.selectpicker('refresh');
+            });
+        }
+
         // Refresh logs
+        var autoScroll = true;
         function refreshLogs() {
             var name = $('#log-filter-name').val();
-            ajaxGet('/api/proxygateway/diagnostics/getLogs', {name: name, lines: 100}, function(data, status) {
-                if (data.lines) {
-                    $('#log-output').text(data.lines.join('\n'));
+            ajaxGet('/api/proxygateway/diagnostics/getLogs', {name: name, lines: 200}, function(data, status) {
+                var logOutput = $('#log-output');
+                if (data.lines && data.lines.length > 0) {
+                    logOutput.text(data.lines.join('\n'));
                 } else {
-                    $('#log-output').text('No logs available.');
+                    logOutput.text('No logs available.');
+                }
+                // Auto-scroll to bottom if enabled
+                if (autoScroll) {
+                    logOutput.scrollTop(logOutput[0].scrollHeight);
                 }
             });
         }
 
-        // Refresh button
+        // Clear logs
+        $('#btn-clear-logs').click(function() {
+            var name = $('#log-filter-name').val();
+            var target = name ? ('connection "' + name + '"') : 'all connections';
+
+            BootstrapDialog.confirm({
+                title: '{{ lang._("Clear Logs") }}',
+                message: '{{ lang._("Are you sure you want to clear logs for") }} ' + target + '?',
+                type: BootstrapDialog.TYPE_WARNING,
+                btnOKLabel: '{{ lang._("Clear") }}',
+                btnOKClass: 'btn-warning',
+                callback: function(result) {
+                    if (result) {
+                        ajaxCall('/api/proxygateway/diagnostics/clearLogs', {name: name}, function(data, status) {
+                            refreshLogs();
+                        });
+                    }
+                }
+            });
+        });
+
+        // Toggle auto-scroll
+        $('#btn-auto-scroll').click(function() {
+            autoScroll = !autoScroll;
+            $(this).toggleClass('btn-primary btn-default');
+            if (autoScroll) {
+                var logOutput = $('#log-output');
+                logOutput.scrollTop(logOutput[0].scrollHeight);
+            }
+        });
+
+        // Refresh when filter changes
+        $('#log-filter-name').change(function() {
+            refreshLogs();
+        });
+
+        // Refresh buttons
         $('#btn-refresh-status').click(refreshStatus);
         $('#btn-refresh-logs').click(refreshLogs);
 
         // Auto-refresh every 10 seconds
-        setInterval(refreshStatus, 10000);
+        setInterval(function() {
+            refreshStatus();
+            refreshLogs();
+        }, 10000);
 
         // Initial load
         refreshStatus();
+        populateLogFilter();
         refreshLogs();
     });
 </script>
@@ -122,15 +187,21 @@
 <div class="content-box" style="margin-top: 1em;">
     <div class="content-box-header">
         <h3>{{ lang._('Logs') }}
-            <div class="pull-right">
+            <div class="pull-right" style="display: flex; gap: 5px; align-items: center;">
                 <select id="log-filter-name" class="selectpicker" data-width="200px">
                     <option value="">{{ lang._('All connections') }}</option>
                 </select>
+                <button id="btn-auto-scroll" class="btn btn-xs btn-primary" title="{{ lang._('Auto-scroll to latest') }}">
+                    <span class="fa fa-fw fa-arrow-down"></span>
+                </button>
                 <button id="btn-refresh-logs" class="btn btn-xs btn-default">
                     <span class="fa fa-fw fa-refresh"></span> {{ lang._('Refresh') }}
+                </button>
+                <button id="btn-clear-logs" class="btn btn-xs btn-warning">
+                    <span class="fa fa-fw fa-eraser"></span> {{ lang._('Clear Logs') }}
                 </button>
             </div>
         </h3>
     </div>
-    <pre id="log-output" style="max-height: 400px; overflow-y: auto; font-size: 12px;">{{ lang._('Loading...') }}</pre>
+    <pre id="log-output" style="max-height: 500px; overflow-y: auto; font-size: 12px; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; line-height: 1.4;">{{ lang._('Loading...') }}</pre>
 </div>
