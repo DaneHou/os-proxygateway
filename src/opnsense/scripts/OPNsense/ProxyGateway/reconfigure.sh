@@ -2,11 +2,14 @@
 
 # reconfigure.sh — Read config model, diff against running state, start/stop as needed
 # Called by configd: configctl proxygateway reconfigure
+# Output is captured by configd (type:script_output) and returned to the API.
 
 SCRIPT_DIR=$(dirname "$0")
 RUNDIR="/var/run/proxygateway"
+LOGDIR="/var/log/proxygateway"
+RECONFIGURE_LOG="${LOGDIR}/reconfigure.log"
 
-mkdir -p "$RUNDIR"
+mkdir -p "$RUNDIR" "$LOGDIR"
 
 # Read desired state from the model via configd template or direct XML parse
 # The PHP controller writes a JSON config to a known location before calling reconfigure
@@ -18,15 +21,11 @@ if [ ! -f "$DESIRED_CONFIG" ]; then
     exit 0
 fi
 
-# Get list of currently running connections
-RUNNING=""
-for conf in "${RUNDIR}"/*.conf; do
-    [ -f "$conf" ] || continue
-    conn_name=$(basename "$conf" .conf)
-    RUNNING="$RUNNING $conn_name"
-done
-
-# Parse desired config and start/stop connections
-# Expected JSON format: {"connections": [{"name": "x", "enabled": true, ...}, ...]}
-# Use a simple Python script to handle JSON parsing and diff logic
-/usr/local/bin/python3 "${SCRIPT_DIR}/reconfigure.py" "$DESIRED_CONFIG"
+# Run reconfigure.py and capture output to both stdout and a persistent log file.
+# stdout goes back to configd (type:script_output) → API → Apply dialog.
+# Log file persists for the diagnostics page to display.
+echo "=== Reconfigure started at $(date) ===" > "$RECONFIGURE_LOG"
+/usr/local/bin/python3 "${SCRIPT_DIR}/reconfigure.py" "$DESIRED_CONFIG" 2>&1 | tee -a "$RECONFIGURE_LOG"
+EXIT_CODE=${PIPESTATUS[0]:-$?}
+echo "=== Reconfigure finished at $(date) (exit code: $EXIT_CODE) ===" >> "$RECONFIGURE_LOG"
+exit $EXIT_CODE
