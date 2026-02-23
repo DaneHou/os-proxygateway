@@ -12,7 +12,6 @@
             </enabled>
             <logLevel type="OptionField">
                 <default>warning</default>
-                <BlankDesc>Warning</BlankDesc>
                 <OptionValues>
                     <debug>Debug</debug>
                     <info>Info</info>
