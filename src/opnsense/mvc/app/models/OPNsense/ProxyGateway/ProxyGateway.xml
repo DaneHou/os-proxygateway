@@ -40,6 +40,13 @@
                 </description>
 
                 <!-- Upstream proxy settings -->
+                <proxyInterface type="TextField">
+                    <Required>N</Required>
+                    <default>wan</default>
+                    <Mask>/^[a-zA-Z0-9_]{1,32}$/</Mask>
+                    <ValidationMessage>Enter a valid OPNsense interface name (e.g., wan, lan, opt1)</ValidationMessage>
+                </proxyInterface>
+
                 <proxyType type="OptionField">
                     <default>socks5</default>
                     <Required>Y</Required>

@@ -65,6 +65,7 @@ class ServiceController extends ApiMutableServiceControllerBase
                     'proxyType'         => (string)$conn->proxyType,
                     'proxyServer'       => (string)$conn->proxyServer,
                     'proxyPort'         => (string)$conn->proxyPort,
+                    'proxyInterface'    => (string)$conn->proxyInterface ?: 'wan',
                     'authEnabled'       => (string)$conn->authEnabled,
                     'authUser'          => (string)$conn->authUser,
                     'authPass'          => (string)$conn->authPass,

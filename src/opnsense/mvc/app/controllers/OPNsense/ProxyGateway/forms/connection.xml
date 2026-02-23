@@ -22,6 +22,12 @@
         <label>Proxy Server</label>
     </field>
     <field>
+        <id>connection.proxyInterface</id>
+        <label>Proxy Server Interface</label>
+        <type>text</type>
+        <help>The OPNsense interface through which the proxy server is reachable (default: wan). For a proxy on a local LAN (e.g. a Tailscale SOCKS5 proxy on LAN2), enter the OPNsense interface name for that LAN (e.g. opt1). Find the internal name under Interfaces → Assignments. This prevents routing loops.</help>
+    </field>
+    <field>
         <id>connection.proxyType</id>
         <label>Type</label>
         <type>dropdown</type>
