@@ -21,19 +21,18 @@
 namespace OPNsense\ProxyGateway;
 
 /**
- * UI controller for the Proxy Gateway plugin.
- * Serves the Volt templates for the web interface.
+ * UI controller for the Proxy Gateway diagnostics page.
+ *
+ * OPNsense routes /ui/proxygateway/diagnostics to
+ * DiagnosticsController::indexAction(), NOT IndexController::diagnosticsAction().
  */
-class IndexController extends \OPNsense\Base\IndexController
+class DiagnosticsController extends \OPNsense\Base\IndexController
 {
     /**
-     * Main settings/connections page.
+     * Diagnostics page.
      */
     public function indexAction()
     {
-        $this->view->generalForm = $this->getForm('general');
-        $this->view->connectionForm = $this->getForm('connection');
-        $this->view->pick('OPNsense/ProxyGateway/index');
+        $this->view->pick('OPNsense/ProxyGateway/diagnostics');
     }
-
 }
