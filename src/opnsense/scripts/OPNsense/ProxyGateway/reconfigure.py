@@ -84,6 +84,7 @@ def run_setup(conn):
         conn.get("proxyType", "socks5"),
         conn.get("proxyServer", ""),
         conn.get("proxyPort", "1080"),
+        "--defer-routes",  # Defer route reconfiguration for batch operations
     ]
 
     # Prepare environment variables for secure credential passing
@@ -159,7 +160,7 @@ def run_teardown(name):
     """Stop a connection using teardown.sh."""
     log.info("Stopping connection: %s", name)
     result = subprocess.run(
-        ["/bin/sh", TEARDOWN_SCRIPT, name],
+        ["/bin/sh", TEARDOWN_SCRIPT, name, "--defer-routes"],
         capture_output=True, text=True
     )
     if result.stdout:
@@ -255,6 +256,19 @@ def main():
     for name in sorted(to_start | to_restart):
         if run_setup(desired[name]) == 0:
             run_healthcheck(desired[name])
+
+    # Trigger route reconfiguration once after all changes
+    if to_stop or to_start or to_restart:
+        log.info("Triggering route reconfiguration...")
+        try:
+            subprocess.run(
+                ["/usr/local/sbin/configctl", "interface", "routes", "reconfigure"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=30
+            )
+            log.debug("Route reconfiguration completed")
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            log.warning("Route reconfiguration failed: %s", e)
 
     # Summary
     unchanged = to_check - to_restart
