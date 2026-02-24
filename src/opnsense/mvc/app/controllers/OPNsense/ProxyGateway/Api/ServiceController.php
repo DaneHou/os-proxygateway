@@ -21,6 +21,7 @@
 namespace OPNsense\ProxyGateway\Api;
 
 use OPNsense\Base\ApiMutableServiceControllerBase;
+use OPNsense\Core\Config;
 
 /**
  * API controller for managing the proxy gateway service lifecycle.
@@ -38,6 +39,81 @@ class ServiceController extends ApiMutableServiceControllerBase
     protected static $internalServiceEnabled = 'general.enabled';
     protected static $internalServiceTemplate = 'OPNsense/ProxyGateway';
     protected static $internalServiceName = 'proxygateway';
+
+    /**
+     * Calculate the deterministic TUN address for a connection name.
+     * Must match the algorithm in setup.sh and proxygateway.inc.
+     */
+    private function tunAddress($name, $tunAddress = '')
+    {
+        if (!empty($tunAddress)) {
+            return $tunAddress;
+        }
+        $hash = md5($name);
+        $oct3 = (hexdec(substr($hash, 0, 2)) % 254) + 1;
+        $oct4 = (hexdec(substr($hash, 2, 2)) % 126) * 2 + 1;
+        return "172.31.{$oct3}.{$oct4}";
+    }
+
+    /**
+     * Sync interface IPs into config.xml for assigned pgw_* interfaces.
+     *
+     * Uses OPNsense's MVC Config API (not legacy write_config) to avoid
+     * include dependency issues. Without this, get_interface_ip() returns
+     * null and gateways show as "defunct".
+     */
+    private function syncInterfaceIps($mdl)
+    {
+        $configObj = Config::getInstance();
+        $xml = $configObj->object();
+        $changed = false;
+
+        if (!isset($xml->interfaces)) {
+            return;
+        }
+
+        foreach ($mdl->connections->connection->iterateItems() as $uuid => $conn) {
+            if (empty((string)$conn->enabled)) {
+                continue;
+            }
+
+            $name = (string)$conn->name;
+            $ifname = "pgw_{$name}";
+            $tunAddr = $this->tunAddress($name, (string)$conn->tunAddress);
+
+            foreach ($xml->interfaces->children() as $ifkey => $iface) {
+                if ((string)$iface->{'if'} === $ifname) {
+                    // Set IP address if missing or changed
+                    if (empty((string)$iface->ipaddr) || (string)$iface->ipaddr !== $tunAddr) {
+                        // Use addChild/replace pattern for SimpleXML
+                        if (isset($iface->ipaddr)) {
+                            $iface->ipaddr = $tunAddr;
+                        } else {
+                            $iface->addChild('ipaddr', $tunAddr);
+                        }
+                        if (isset($iface->subnet)) {
+                            $iface->subnet = '32';
+                        } else {
+                            $iface->addChild('subnet', '32');
+                        }
+                        if (empty((string)$iface->enable)) {
+                            if (isset($iface->enable)) {
+                                $iface->enable = '1';
+                            } else {
+                                $iface->addChild('enable', '1');
+                            }
+                        }
+                        $changed = true;
+                    }
+                    break;
+                }
+            }
+        }
+
+        if ($changed) {
+            $configObj->save();
+        }
+    }
 
     /**
      * Reconfigure the service.
@@ -102,10 +178,10 @@ class ServiceController extends ApiMutableServiceControllerBase
             // Apply the desired config (creates TUN devices, writes _router files)
             $response = trim($backend->configdpRun('proxygateway reconfigure'));
 
-            // Sync interface IPs into config.xml so OPNsense's gateway system
-            // can detect the gateways. Without this, get_interface_ip() returns
-            // null for assigned pgw_* interfaces and gateways show as "defunct".
-            $backend->configdRun('proxygateway sync');
+            // Sync interface IPs into config.xml using the MVC Config API.
+            // This ensures get_interface_ip() returns the tunnel IP so
+            // gateways are not "defunct".
+            $this->syncInterfaceIps($mdl);
 
             // Reconfigure routes to pick up gateways with the updated IPs.
             // This must run AFTER sync so the gateway system sees the IPs.

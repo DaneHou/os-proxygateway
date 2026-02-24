@@ -303,12 +303,15 @@ function proxygateway_sync_only($verbose = false)
  * OPNsense creates a config entry but without IP configuration.
  * This function auto-populates the correct tunnel IP address so the
  * associated gateway is functional (not "defunct").
+ *
+ * Uses the MVC Config API to save, avoiding legacy include dependencies.
  */
 function proxygateway_sync_interfaces()
 {
-    global $config;
+    $configObj = \OPNsense\Core\Config::getInstance();
+    $xml = $configObj->object();
 
-    if (!isset($config['interfaces'])) {
+    if (!isset($xml->interfaces)) {
         return;
     }
 
@@ -325,25 +328,36 @@ function proxygateway_sync_interfaces()
         $tunAddr = proxygateway_tun_address($name, (string)$conn->tunAddress);
 
         // Find this interface in OPNsense's assigned interfaces
-        foreach ($config['interfaces'] as $ifkey => &$iface) {
-            if (isset($iface['if']) && $iface['if'] === $ifname) {
+        foreach ($xml->interfaces->children() as $ifkey => $iface) {
+            if ((string)$iface->{'if'} === $ifname) {
                 // Auto-configure IP if missing or changed
-                if (empty($iface['ipaddr']) || $iface['ipaddr'] !== $tunAddr) {
-                    $iface['ipaddr'] = $tunAddr;
-                    $iface['subnet'] = '32';
-                    if (empty($iface['enable'])) {
-                        $iface['enable'] = '1';
+                if (empty((string)$iface->ipaddr) || (string)$iface->ipaddr !== $tunAddr) {
+                    if (isset($iface->ipaddr)) {
+                        $iface->ipaddr = $tunAddr;
+                    } else {
+                        $iface->addChild('ipaddr', $tunAddr);
+                    }
+                    if (isset($iface->subnet)) {
+                        $iface->subnet = '32';
+                    } else {
+                        $iface->addChild('subnet', '32');
+                    }
+                    if (empty((string)$iface->enable)) {
+                        if (isset($iface->enable)) {
+                            $iface->enable = '1';
+                        } else {
+                            $iface->addChild('enable', '1');
+                        }
                     }
                     $changed = true;
                 }
                 break;
             }
         }
-        unset($iface);
     }
 
     if ($changed) {
-        write_config('Proxy Gateway: auto-configure interface IP addresses');
+        $configObj->save();
     }
 }
 
