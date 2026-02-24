@@ -151,57 +151,21 @@ function proxygateway_interfaces()
 }
 
 /**
- * Register firewall rules for proxy gateway connections.
- * Handles outbound NAT on tun interfaces and proxy route-loop prevention.
+ * Firewall integration hook.
+ *
+ * Note: Firewall rules and NAT configuration for proxy gateway connections
+ * should be configured manually through the OPNsense web UI as documented
+ * in the user guide. The plugin registers tunnel interfaces and gateways,
+ * which can then be used in user-defined firewall rules.
+ *
+ * This function is kept as a placeholder for potential future automatic
+ * rule generation if the OPNsense Firewall Plugin API supports it.
  */
 function proxygateway_firewall(\OPNsense\Firewall\Plugin $fw)
 {
-    if (!proxygateway_enabled()) {
-        return;
-    }
-
-    $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
-    foreach ($mdl->connections->connection->iterateItems() as $uuid => $conn) {
-        if (empty((string)$conn->enabled)) {
-            continue;
-        }
-
-        $name = (string)$conn->name;
-        $ifname = "pgw_{$name}";
-        $proxyAddr = (string)$conn->proxyServer;
-        $proxyPort = (string)$conn->proxyPort;
-        $proxyInterface = !empty((string)$conn->proxyInterface) ? (string)$conn->proxyInterface : 'wan';
-
-        // Outbound NAT on the tunnel interface
-        $fw->registerNatRule(
-            1000,
-            [
-                'interface'      => $ifname,
-                'descr'          => "ProxyGW {$name}: Outbound NAT",
-                'type'           => 'pass',
-                'protocol'       => 'tcp/udp',
-                'target'         => 'iface:' . $ifname,
-                'staticnatport'  => false,
-                'log'            => false,
-            ]
-        );
-
-        // Allow traffic from this firewall to the proxy server (prevent routing loop)
-        $fw->registerFilterRule(
-            500,
-            [
-                'interface'   => $proxyInterface,
-                'descr'       => "ProxyGW {$name}: Allow proxy connection",
-                'type'        => 'pass',
-                'direction'   => 'out',
-                'protocol'    => 'tcp',
-                'to'          => $proxyAddr,
-                'to_port'     => $proxyPort,
-                'quick'       => true,
-                'log'         => false,
-            ]
-        );
-    }
+    // Firewall rules are configured manually by users via the web UI.
+    // See docs/USER_GUIDE_COMPREHENSIVE.md for firewall rule examples.
+    return;
 }
 
 /**
