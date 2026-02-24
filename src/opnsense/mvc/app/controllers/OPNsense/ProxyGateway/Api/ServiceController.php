@@ -331,19 +331,14 @@ class ServiceController extends ApiMutableServiceControllerBase
             // Re-register interfaces so OPNsense picks up new/removed devices
             $backend->configdRun('interface invoke registration');
 
-            // Pre-reconfigure sync: ensure IP + gateway are in config.xml
-            // BEFORE reconfigure triggers route reconfiguration internally.
-            $this->syncInterfaceIps($mdl);
-
             // Apply the desired config (creates TUN devices, writes _router files)
             $response = trim($backend->configdpRun('proxygateway reconfigure'));
 
-            // Post-reconfigure sync: catch any changes from new interface
-            // assignments that may have been created during reconfigure.
+            // Sync interface IPs + gateways into config.xml ONCE, after
+            // reconfigure has created TUN devices and written _router files.
             $this->syncInterfaceIps($mdl);
 
-            // Reconfigure routes to pick up gateways with the updated IPs.
-            // This must run AFTER sync so the gateway system sees the IPs.
+            // Reconfigure routes ONCE to pick up gateways with the updated IPs.
             $backend->configdRun('interface routes reconfigure');
 
             $result = ['status' => 'ok', 'response' => $response];
