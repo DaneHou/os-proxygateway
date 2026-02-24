@@ -148,35 +148,22 @@ log_info "Tunnel: ${TUN_LOCAL} <-> ${TUN_PEER} (MTU: ${TUN_MTU})"
 log_info "Proxy: ${PROXY_TYPE}://${PROXY_ADDR}:${PROXY_PORT}"
 log_info "DNS mode: ${DNS_MODE}${DNS_SERVER:+ (server: $DNS_SERVER)}"
 
-# Step 1: Create tun device
-# On FreeBSD, tun devices must be created via the tun cloner, then renamed.
-# "ifconfig <custom_name> create" does NOT work for tun devices.
-# We always create a fresh device to avoid stale /dev/tunN references.
-# The rename happens AFTER tun2socks opens the device (see Step 3).
-
-# Destroy any existing interface to ensure a clean state
+# Step 1: Ensure no conflicting interface exists
+# tun2socks creates its own TUN device via the FreeBSD cloner and renames it
+# to the requested name. We must ensure that name is free.
 if ifconfig "$IFACE" >/dev/null 2>&1; then
     log_info "Destroying existing interface $IFACE for clean setup"
     ifconfig "$IFACE" destroy 2>/dev/null || true
 fi
 
-log_info "Creating tun device..."
-TUN_DEV=$(ifconfig tun create)
-if [ -z "$TUN_DEV" ]; then
-    log_error "Failed to create tun device"
-    exit 1
-fi
-log_debug "Created $TUN_DEV (will rename to $IFACE after tun2socks starts)"
-echo "$TUN_DEV" > "$TUNDEVFILE"
-
-# Step 2: Start tun2socks BEFORE renaming the interface.
-# On FreeBSD, /dev/tunN is removed when the interface is renamed, so tun2socks
-# must open the device while it still has its original name. The open fd remains
-# valid even after the rename.
-log_info "Starting tun2socks (device=$TUN_DEV, loglevel: ${LOGLEVEL})..."
+# Step 2: Start tun2socks with the final interface name directly.
+# tun2socks opens /dev/tun (cloner), gets an auto-assigned tunN device,
+# then renames it to $IFACE. This ensures tun2socks owns the device that
+# IS the pgw_* interface — no device mismatch possible.
+log_info "Starting tun2socks (device=$IFACE, loglevel: ${LOGLEVEL})..."
 
 # Build tun2socks command with optional UDP timeout
-TUN2SOCKS_CMD="$TUN2SOCKS -device $TUN_DEV -proxy $PROXY_URL -loglevel $LOGLEVEL"
+TUN2SOCKS_CMD="$TUN2SOCKS -device $IFACE -proxy $PROXY_URL -loglevel $LOGLEVEL"
 
 # For SOCKS5 proxies, add UDP timeout to ensure UDP relay works properly
 # This is especially important for Tailscale and other SOCKS5 proxies that support UDP
@@ -193,32 +180,30 @@ T2S_PID=$!
 echo "$T2S_PID" > "$PIDFILE"
 log_debug "tun2socks spawned with PID $T2S_PID"
 
-# Wait for tun2socks to open /dev/tunN before we rename the interface
-sleep 0.3
+# Wait for tun2socks to create the interface
+sleep 0.5
 if ! kill -0 "$T2S_PID" 2>/dev/null; then
     log_error "tun2socks failed to start — check ${LOGFILE} for details"
     tail -20 "$LOGFILE" 2>/dev/null || true
-    rm -f "$PIDFILE" "$TUNDEVFILE"
-    ifconfig "$TUN_DEV" destroy 2>/dev/null || true
+    rm -f "$PIDFILE"
     exit 1
 fi
 
-# Step 3: Rename the interface AFTER tun2socks has opened /dev/tunN.
-# The fd tun2socks holds remains valid even after /dev/tunN is removed by rename.
-if [ "$TUN_DEV" != "$IFACE" ]; then
-    log_debug "Renaming $TUN_DEV to $IFACE..."
-    ifconfig "$TUN_DEV" name "$IFACE" || {
-        log_error "Failed to rename $TUN_DEV to $IFACE"
-        kill "$T2S_PID" 2>/dev/null || true
-        rm -f "$PIDFILE" "$TUNDEVFILE"
-        ifconfig "$TUN_DEV" destroy 2>/dev/null || true
-        exit 1
-    }
+# Verify tun2socks created the interface
+if ! ifconfig "$IFACE" >/dev/null 2>&1; then
+    log_error "tun2socks started but interface $IFACE was not created"
+    kill "$T2S_PID" 2>/dev/null || true
+    rm -f "$PIDFILE"
+    exit 1
 fi
+
+# Record the interface name (tun2socks owns the underlying device)
+echo "$IFACE" > "$TUNDEVFILE"
 
 # Add to proxygateway interface group
 ifconfig "$IFACE" group proxygateway 2>/dev/null || true
 
+# Step 3: Configure the interface
 log_info "Configuring $IFACE: ${TUN_LOCAL} <-> ${TUN_PEER} mtu ${TUN_MTU}"
 ifconfig "$IFACE" inet "$TUN_LOCAL" "$TUN_PEER" mtu "$TUN_MTU" up
 log_debug "Device ${IFACE} configured: ${TUN_LOCAL}/${TUN_PEER}"
@@ -245,7 +230,7 @@ log_debug "Wrote monitor IP file: ${MONITOR_FILE} -> ${PROXY_ADDR}"
 cat > "$CONFFILE" <<EOF
 NAME="${NAME}"
 IFACE="${IFACE}"
-TUN_DEV="${TUN_DEV}"
+TUN_DEV="${IFACE}"
 PROXY_TYPE="${PROXY_TYPE}"
 PROXY_ADDR="${PROXY_ADDR}"
 PROXY_PORT="${PROXY_PORT}"
