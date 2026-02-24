@@ -56,7 +56,7 @@ First stable production release of os-proxygateway, an OPNsense plugin that conv
 - **Traffic Management**
   - Per-connection MTU configuration (1280-9000 bytes)
   - Automatic tunnel IP assignment from 172.31.0.0/16 pool
-  - Outbound NAT auto-configuration
+  - Manual outbound NAT configuration via OPNsense web UI
   - DNS routing through tunnel or custom DNS server
 
 - **Health Monitoring**
@@ -412,8 +412,8 @@ This release has been tested with:
 
 ✅ **OPNsense Integration:**
 - Gateway registration and monitoring
-- Firewall rule integration
-- NAT rule generation
+- Manual firewall rule configuration via web UI
+- Manual NAT configuration via web UI
 - Interface assignments
 - HA configuration sync
 
