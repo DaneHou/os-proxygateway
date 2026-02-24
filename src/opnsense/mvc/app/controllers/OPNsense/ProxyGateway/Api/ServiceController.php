@@ -120,7 +120,8 @@ class ServiceController extends ApiMutableServiceControllerBase
     /**
      * Sync gateway entries in config.xml for proxy gateway connections.
      *
-     * Creates/updates <gateway_item> entries named PROXYGW_{NAME} with fargw=1
+     * Creates/updates <gateway_item> entries named PROXYGW_{NAME} under the
+     * MVC <Gateways> section (capital G, with uuid attributes) with fargw=1
      * (point-to-point /32 subnet compatibility) and monitor_disable=1 (SOCKS5
      * doesn't support ICMP; the plugin uses its own HTTP health check).
      *
@@ -133,9 +134,9 @@ class ServiceController extends ApiMutableServiceControllerBase
             return;
         }
 
-        // Ensure <gateways> section exists
-        if (!isset($xml->gateways)) {
-            $xml->addChild('gateways');
+        // OPNsense stores gateways under <Gateways> (MVC model, capital G)
+        if (!isset($xml->Gateways)) {
+            return;
         }
 
         // Build map of expected gateway names for enabled connections with assigned interfaces
@@ -175,14 +176,29 @@ class ServiceController extends ApiMutableServiceControllerBase
             }
 
             $expectedGateways[$gwName] = [
-                'interface'       => $assignedKey,
-                'gateway'         => $peerIp,
-                'name'            => $gwName,
-                'priority'        => $priority,
-                'ipprotocol'      => 'inet',
-                'fargw'           => '1',
-                'monitor_disable' => '1',
-                'descr'           => "Proxy Gateway: {$name}",
+                'disabled'                  => '0',
+                'name'                      => $gwName,
+                'descr'                     => "Proxy Gateway: {$name}",
+                'interface'                 => $assignedKey,
+                'ipprotocol'                => 'inet',
+                'gateway'                   => $peerIp,
+                'defaultgw'                 => '0',
+                'fargw'                     => '1',
+                'monitor_disable'           => '1',
+                'monitor_noroute'           => '0',
+                'monitor_killstates'        => '0',
+                'monitor_killstates_priority' => '0',
+                'monitor'                   => '',
+                'force_down'                => '0',
+                'priority'                  => $priority,
+                'weight'                    => '1',
+                'latencylow'                => '',
+                'latencyhigh'               => '',
+                'losslow'                   => '',
+                'losshigh'                  => '',
+                'interval'                  => '',
+                'loss_interval'             => '',
+                'data_length'               => '',
             ];
 
             // Write _router file as fallback for auto-detection
@@ -191,18 +207,20 @@ class ServiceController extends ApiMutableServiceControllerBase
             @chmod($routerFile, 0644);
         }
 
+        // Fields to check for updates on existing entries
+        $updateFields = ['disabled', 'interface', 'gateway', 'priority', 'ipprotocol',
+                         'fargw', 'monitor_disable', 'descr'];
+
         // Update or create gateway_item entries
         foreach ($expectedGateways as $gwName => $gwData) {
             $found = false;
-            foreach ($xml->gateways->children() as $gw) {
+            foreach ($xml->Gateways->children() as $gw) {
                 if ($gw->getName() !== 'gateway_item') {
                     continue;
                 }
                 if ((string)$gw->name === $gwName) {
                     $found = true;
-                    // Update existing entry if anything changed
-                    $fields = ['interface', 'gateway', 'priority', 'ipprotocol', 'fargw', 'monitor_disable', 'descr'];
-                    foreach ($fields as $field) {
+                    foreach ($updateFields as $field) {
                         if ((string)$gw->{$field} !== $gwData[$field]) {
                             if (isset($gw->{$field})) {
                                 $gw->{$field} = $gwData[$field];
@@ -217,7 +235,17 @@ class ServiceController extends ApiMutableServiceControllerBase
             }
 
             if (!$found) {
-                $gw = $xml->gateways->addChild('gateway_item');
+                $gw = $xml->Gateways->addChild('gateway_item');
+                // Generate a UUID v4 for the new entry
+                $newUuid = sprintf(
+                    '%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
+                    mt_rand(0, 0xffff), mt_rand(0, 0xffff),
+                    mt_rand(0, 0xffff),
+                    mt_rand(0, 0x0fff) | 0x4000,
+                    mt_rand(0, 0x3fff) | 0x8000,
+                    mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
+                );
+                $gw->addAttribute('uuid', $newUuid);
                 foreach ($gwData as $field => $value) {
                     $gw->addChild($field, $value);
                 }
@@ -227,7 +255,7 @@ class ServiceController extends ApiMutableServiceControllerBase
 
         // Remove orphaned PROXYGW_* entries
         $toRemove = [];
-        foreach ($xml->gateways->children() as $gw) {
+        foreach ($xml->Gateways->children() as $gw) {
             if ($gw->getName() !== 'gateway_item') {
                 continue;
             }
