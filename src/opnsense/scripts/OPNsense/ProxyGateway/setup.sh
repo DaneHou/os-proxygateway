@@ -49,6 +49,7 @@ DNS_MODE="tunnel"
 DNS_SERVER=""
 LOGLEVEL="warn"
 DEFER_ROUTES="no"
+PROXY_IFACE="wan"
 
 # Parse optional arguments
 while [ $# -gt 0 ]; do
@@ -63,6 +64,7 @@ while [ $# -gt 0 ]; do
         --tun-mtu)    TUN_MTU="$2"; shift 2 ;;
         --dns-mode)   DNS_MODE="$2"; shift 2 ;;
         --dns-server) DNS_SERVER="$2"; shift 2 ;;
+        --proxy-iface) PROXY_IFACE="$2"; shift 2 ;;
         --defer-routes) DEFER_ROUTES="yes"; shift 1 ;;
         --loglevel)
             # tun2socks uses Go's zap logger: debug|info|warn|error|panic|fatal
@@ -219,12 +221,22 @@ if ! kill -0 "$T2S_PID" 2>/dev/null; then
     exit 1
 fi
 
-# Step 3: Write router file for OPNsense gateway auto-detection
-# Use /var/run instead of /tmp for security (symlink attack prevention)
-ROUTER_FILE="/var/run/${IFACE}_router"
+# Step 3: Write router and monitor files for OPNsense gateway auto-detection
+# OPNsense's Autoconf::getRouter() reads from /tmp/{interface}_router
+ROUTER_FILE="/tmp/${IFACE}_router"
 echo "$TUN_PEER" > "$ROUTER_FILE"
-chmod 644 "$ROUTER_FILE"  # This file needs to be readable by OPNsense gateway detection
+chmod 644 "$ROUTER_FILE"
 log_debug "Wrote router file: ${ROUTER_FILE} -> ${TUN_PEER}"
+
+# Write monitor IP file for dpinger health checks.
+# Use the proxy server address as the monitor target — it's reachable via
+# the physical interface without going through the TUN, making ICMP pings
+# reliable (SOCKS5 does not natively support ICMP, so pinging the TUN peer
+# through tun2socks would be unreliable).
+MONITOR_FILE="/tmp/${IFACE}_monitorip"
+echo "$PROXY_ADDR" > "$MONITOR_FILE"
+chmod 644 "$MONITOR_FILE"
+log_debug "Wrote monitor IP file: ${MONITOR_FILE} -> ${PROXY_ADDR}"
 
 # Step 4: Save connection config for status/teardown/healthcheck
 # Note: PROXY_URL contains credentials, so secure this file
@@ -241,6 +253,7 @@ TUN_PEER="${TUN_PEER}"
 TUN_MTU="${TUN_MTU}"
 DNS_MODE="${DNS_MODE}"
 DNS_SERVER="${DNS_SERVER}"
+PROXY_IFACE="${PROXY_IFACE}"
 PID="${T2S_PID}"
 EOF
 # Secure file permissions: owner (root) read/write only
