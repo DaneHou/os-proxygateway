@@ -190,11 +190,20 @@ log_debug "Device ${IFACE} configured: ${TUN_LOCAL}/${TUN_PEER}"
 # Pass the original tun device name (e.g., tun0) so tun2socks opens /dev/tun0.
 # The /dev/tunN node persists even after the interface is renamed to pgw_xxx.
 log_info "Starting tun2socks (device=$TUN_DEV, loglevel: ${LOGLEVEL})..."
-$TUN2SOCKS \
-    -device "$TUN_DEV" \
-    -proxy "$PROXY_URL" \
-    -loglevel "$LOGLEVEL" \
-    >> "$LOGFILE" 2>&1 &
+
+# Build tun2socks command with optional UDP timeout
+TUN2SOCKS_CMD="$TUN2SOCKS -device $TUN_DEV -proxy $PROXY_URL -loglevel $LOGLEVEL"
+
+# For SOCKS5 proxies, add UDP timeout to ensure UDP relay works properly
+# This is especially important for Tailscale and other SOCKS5 proxies that support UDP
+if [ "$PROXY_TYPE" = "socks5" ] || [ "$PROXY_TYPE" = "socks5tls" ]; then
+    # Set UDP timeout to 5 minutes (300s) to keep UDP associations alive
+    # This helps with DNS and other UDP-based protocols
+    TUN2SOCKS_CMD="$TUN2SOCKS_CMD -udp-timeout 300s"
+    log_debug "Added UDP timeout (300s) for SOCKS5 proxy"
+fi
+
+$TUN2SOCKS_CMD >> "$LOGFILE" 2>&1 &
 
 T2S_PID=$!
 echo "$T2S_PID" > "$PIDFILE"
