@@ -49,6 +49,7 @@ DNS_MODE="tunnel"
 DNS_SERVER=""
 LOGLEVEL="warn"
 DEFER_ROUTES="no"
+PROXY_IFACE="wan"
 
 # Parse optional arguments
 while [ $# -gt 0 ]; do
@@ -63,6 +64,7 @@ while [ $# -gt 0 ]; do
         --tun-mtu)    TUN_MTU="$2"; shift 2 ;;
         --dns-mode)   DNS_MODE="$2"; shift 2 ;;
         --dns-server) DNS_SERVER="$2"; shift 2 ;;
+        --proxy-iface) PROXY_IFACE="$2"; shift 2 ;;
         --defer-routes) DEFER_ROUTES="yes"; shift 1 ;;
         --loglevel)
             # tun2socks uses Go's zap logger: debug|info|warn|error|panic|fatal
@@ -241,6 +243,7 @@ TUN_PEER="${TUN_PEER}"
 TUN_MTU="${TUN_MTU}"
 DNS_MODE="${DNS_MODE}"
 DNS_SERVER="${DNS_SERVER}"
+PROXY_IFACE="${PROXY_IFACE}"
 PID="${T2S_PID}"
 EOF
 # Secure file permissions: owner (root) read/write only
