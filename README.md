@@ -55,11 +55,8 @@ Then navigate to **Services → Proxy Gateway → Connections** in the OPNsense 
 **📚 Complete Documentation:**
 
 - **[Comprehensive User Guide](docs/USER_GUIDE_COMPREHENSIVE.md)** - Detailed setup with topology diagrams
-- **[Quick Guide](docs/guide.md)** - Original concise guide
 - **[Release Notes](RELEASE_NOTES.md)** - Version history and changes
 - **[Security Policy](SECURITY.md)** - Security status and best practices
-- **[Security Review](SECURITY_REVIEW.md)** - Complete security audit
-- **[Security Fixes Guide](SECURITY_FIXES_IMPLEMENTATION_GUIDE.md)** - Implementation details
 
 **📖 Guides Include:**
 
