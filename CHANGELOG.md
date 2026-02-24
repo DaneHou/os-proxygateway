@@ -5,6 +5,24 @@ All notable changes to the OS Proxy Gateway plugin will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-02-24
+
+### Fixed
+
+- Added UDP timeout configuration for SOCKS5 proxies to fix UDP relay issues with Tailscale and other SOCKS5 servers
+- Improved UDP packet handling for DNS and other UDP-based protocols through SOCKS5 proxies
+- Fixed "packet not handled" errors when using Tailscale SOCKS5 proxy connections
+
+### Added
+
+- Comprehensive Tailscale SOCKS5 proxy troubleshooting section in user guide
+- Automatic UDP timeout (300s) for SOCKS5 and SOCKS5+TLS connections
+- Detailed documentation for configuring Tailscale as a SOCKS5 proxy server
+
+### Changed
+
+- Enhanced tun2socks command invocation to include UDP timeout for improved SOCKS5 compatibility
+
 ## [1.0.0] - 2026-02-24
 
 ### Production Release

@@ -1299,6 +1299,156 @@ Check proxy server capacity/rate limits
 Verify proxy server isn't blocking health check requests
 ```
 
+### Tailscale SOCKS5 Proxy Issues
+
+**Symptom:** Tailscale SOCKS5 proxy connects but has no internet access (only local network).
+
+**Background:**
+
+Tailscale provides a SOCKS5 proxy feature that can be exposed on your local network. When using Tailscale as a SOCKS5 proxy server with this plugin, you may encounter issues where:
+- The connection shows as "UP" in diagnostics
+- Local network access works
+- Internet/external access fails
+- Tailscale logs show: `netstack: decrementing connsInFlightByClient because the packet was not handled`
+
+**Root Cause:**
+
+This issue occurs when UDP relay (required for DNS and other UDP protocols) isn't properly configured. While tun2socks supports UDP relay for SOCKS5 proxies, some SOCKS5 implementations like Tailscale require specific UDP timeout settings to maintain the UDP association.
+
+**Solution:**
+
+**As of version 1.1.0**, the plugin automatically adds UDP timeout configuration for all SOCKS5 connections. If you're experiencing this issue:
+
+1. **Verify Proxy Configuration:**
+   ```
+   Services → Proxy Gateway → Connections → [Your Tailscale Connection]
+
+   Proxy Type: SOCKS5 (not HTTP/HTTPS)
+   Proxy Server: 192.168.68.87 (your Tailscale proxy IP)
+   Proxy Port: 1055 (or your configured port)
+   ```
+
+2. **Check DNS Mode:**
+   ```
+   DNS Settings → Mode: Route through tunnel
+
+   This ensures DNS queries go through the SOCKS5 UDP relay.
+   ```
+
+3. **Verify Tailscale Proxy is Accessible:**
+   ```bash
+   # From OPNsense shell:
+   nc -zv 192.168.68.87 1055
+   # Should show: Connection succeeded
+   ```
+
+4. **Check tun2socks Logs for UDP:**
+   ```bash
+   # View connection logs:
+   tail -f /var/log/proxygateway/<connection_name>.log
+
+   # Look for UDP-related messages
+   # Should see: Added UDP timeout (300s) for SOCKS5 proxy
+   ```
+
+5. **Test DNS Resolution:**
+   ```bash
+   # From a client device routed through the proxy:
+   nslookup google.com
+
+   # Should resolve successfully
+   ```
+
+**Tailscale-Specific Configuration Tips:**
+
+```
+Connection Settings:
+  Name: tailscale_proxy
+  Proxy Type: SOCKS5 (required)
+  Proxy Server: 192.168.x.x (Tailscale machine's LAN IP)
+  Proxy Port: 1055 (or your configured port)
+  Authentication: Not required (Tailscale handles auth)
+
+Tunnel Settings:
+  MTU: 1420 (recommended for Tailscale)
+
+DNS Settings:
+  Mode: Route through tunnel
+
+Health Check:
+  Enabled: Yes
+  Interval: 30 seconds
+  Target: http://1.1.1.1/ (or leave default)
+```
+
+**Firewall Considerations:**
+
+If you're running Tailscale on a machine in your LAN (e.g., LAN2 at 192.168.68.87) and want devices on another LAN (e.g., LAN3) to use it:
+
+1. **Allow Access to Tailscale Proxy:**
+   ```
+   Firewall → Rules → LAN3
+
+   Rule 1:
+     Action: Pass
+     Protocol: TCP/UDP
+     Source: LAN3 net
+     Destination: 192.168.68.87 (Tailscale machine)
+     Destination Port: 1055
+     Description: Allow access to Tailscale SOCKS5 proxy
+   ```
+
+2. **Route Through Proxy Gateway:**
+   ```
+   Rule 2:
+     Action: Pass
+     Protocol: any
+     Source: LAN3 net (or specific IPs)
+     Destination: any
+     Gateway: PROXYGW_tailscale_proxy
+     Description: Route LAN3 through Tailscale
+   ```
+
+**Common Issues and Solutions:**
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| "Packet not handled" in Tailscale logs | UDP relay not working | Verify proxy type is SOCKS5, check plugin version ≥1.1.0 |
+| DNS fails, but can ping IPs | DNS not going through tunnel | Set DNS mode to "Route through tunnel" |
+| Connection shows UP but no traffic | Firewall blocking proxy access | Add rule allowing access to Tailscale IP:port |
+| Local network works, internet doesn't | Tailscale routing not configured | Check Tailscale exit node configuration |
+| High latency | Tailscale relay path inefficient | Use `tailscale netcheck` to optimize route |
+
+**Verifying the Fix:**
+
+After configuration, verify everything works:
+
+```bash
+# 1. Check connection status
+# Services → Proxy Gateway → Diagnostics
+# Connection should show: UP
+
+# 2. From client device, test DNS:
+nslookup google.com
+# Should resolve
+
+# 3. Test internet connectivity:
+curl http://ifconfig.me
+# Should show Tailscale exit node's IP
+
+# 4. Check for errors in Tailscale logs:
+# Tailscale machine:
+sudo tailscale status
+sudo journalctl -u tailscale -f
+# Should not see "packet not handled" errors
+```
+
+**Additional Resources:**
+
+- Tailscale SOCKS5 proxy documentation: https://tailscale.com/kb/1112/userspace-networking
+- Tailscale subnet routing: https://tailscale.com/kb/1019/subnets
+- tun2socks UDP relay: https://github.com/xjasonlyu/tun2socks
+
 ---
 
 (Continuing in next message due to length...)
