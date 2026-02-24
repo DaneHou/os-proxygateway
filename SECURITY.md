@@ -51,7 +51,7 @@ The os-proxygateway plugin has undergone a comprehensive security review. Most c
 - Config exports expose credentials
 - Any admin with config access can view passwords
 
-**Mitigation:** This issue is documented in `SECURITY_FIXES_IMPLEMENTATION_GUIDE.md`. Implementation requires research into OPNsense's credential encryption framework.
+**Mitigation:** Implementation requires research into OPNsense's credential encryption framework (checking existing VPN plugins for encryption patterns).
 
 **Status:** Planned for v1.1.0 release
 
@@ -260,7 +260,7 @@ Gateway: PROXYGW_myproxy
 - Enhanced input validation throughout
 - Documented all remaining issues with mitigations
 
-**Detailed Report:** See `SECURITY_REVIEW.md`
+**Note:** A comprehensive internal security review was conducted on 2026-02-23 to identify and address these issues.
 
 ## Compliance and Standards
 
@@ -338,9 +338,6 @@ We thank the following individuals for responsible security disclosures:
 
 ## Additional Resources
 
-- **Full Security Review:** `SECURITY_REVIEW.md`
-- **Implementation Guide:** `SECURITY_FIXES_IMPLEMENTATION_GUIDE.md`
-- **Security Review Summary:** `SECURITY_REVIEW_SUMMARY.md`
 - **OPNsense Security:** https://docs.opnsense.org/manual/how-tos/user-security.html
 - **FreeBSD Security:** https://www.freebsd.org/security/
 
