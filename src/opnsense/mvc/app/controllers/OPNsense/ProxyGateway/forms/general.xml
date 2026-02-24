@@ -6,6 +6,12 @@
         <help>Enable or disable the Proxy Gateway service globally.</help>
     </field>
     <field>
+        <id>general.startOnBoot</id>
+        <label>Start connections on boot</label>
+        <type>checkbox</type>
+        <help>Automatically start all enabled connections when the system boots. When disabled, connections must be started manually via the Apply button.</help>
+    </field>
+    <field>
         <id>general.logLevel</id>
         <label>Log Level</label>
         <type>dropdown</type>

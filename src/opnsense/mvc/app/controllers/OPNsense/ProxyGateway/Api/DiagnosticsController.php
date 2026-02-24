@@ -194,6 +194,10 @@ class DiagnosticsController extends ApiControllerBase
         if ($this->request->isPost()) {
             $name = $this->request->getPost('name', null, '');
 
+            if (!empty($name) && !preg_match('/^[a-zA-Z0-9_-]{1,16}$/', $name)) {
+                return ['status' => 'failed', 'message' => 'Invalid connection name'];
+            }
+
             $backend = new \OPNsense\Core\Backend();
             $response = trim($backend->configdRun("proxygateway clearlogs {$name}"));
 
