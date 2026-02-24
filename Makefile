@@ -114,10 +114,9 @@ install-tun2socks:
 activate:
 	@echo ">>> Activating plugin..."
 	@sysrc proxygateway_enable=YES 2>/dev/null || true
-	# Flush menu cache (MenuSystem.php caches to this file)
+	# Flush menu cache (MenuSystem.php caches to /var/lib/php/tmp/)
+	@rm -f /var/lib/php/tmp/opnsense_menu_cache.xml 2>/dev/null || true
 	@rm -f /tmp/opnsense_menu_cache.xml 2>/dev/null || true
-	# Flush Volt template cache and PHP opcache
-	@rm -f $(DESTDIR)$(PREFIX)/opnsense/mvc/app/cache/*.php 2>/dev/null || true
 	# Verify plugin hooks load without PHP errors
 	@echo ">>> Checking plugin for PHP errors..."
 	@php -l $(PLUGINS_DIR)/proxygateway.inc 2>&1 || true
@@ -125,7 +124,7 @@ activate:
 	# Restart configd to pick up new actions
 	@service configd restart 2>/dev/null || true
 	# Restart web GUI to flush opcache and pick up new menu/controllers
-	@service php-fpm restart 2>/dev/null || true
+	@configctl webgui restart 2>/dev/null || service php_fpm restart 2>/dev/null || true
 	# Verify plugin registration
 	@echo ">>> Verifying plugin registration..."
 	@pluginctl -c 2>/dev/null || true
@@ -149,8 +148,8 @@ uninstall:
 	@rm -f $(RCD_DIR)/opnsense-proxygateway
 	@rm -f $(DESTDIR)/etc/newsyslog.conf.d/proxygateway.conf
 	@rm -rf /var/run/proxygateway
+	@rm -f /var/lib/php/tmp/opnsense_menu_cache.xml 2>/dev/null || true
 	@rm -f /tmp/opnsense_menu_cache.xml 2>/dev/null || true
-	@rm -f $(DESTDIR)$(PREFIX)/opnsense/mvc/app/cache/*.php 2>/dev/null || true
 	@sysrc -x proxygateway_enable 2>/dev/null || true
 	@$(PREFIX)/sbin/configctl configd actions 2>/dev/null || true
 	@echo ">>> Plugin removed. tun2socks binary left in place."
