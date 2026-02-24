@@ -30,6 +30,8 @@ _LOG_COMPONENT="unknown"
 _LOG_CONNECTION="-"
 _LOG_MIN_LEVEL=$_LOG_LEVEL_INFO
 _LOG_FILE=""
+_LOG_TIMESTAMP_CACHE=""
+_LOG_TIMESTAMP_EPOCH=0
 
 # Initialize logging for a script
 # Usage: log_init <component> [connection_name] [log_level]
@@ -70,8 +72,13 @@ _log_emit() {
     # Check minimum level
     [ "$_level_num" -lt "$_LOG_MIN_LEVEL" ] && return 0
 
-    # Format timestamp
-    _timestamp=$(date -u "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date "+%Y-%m-%dT%H:%M:%S")
+    # Format timestamp - cache it to avoid calling date multiple times per second
+    _current_epoch=$(date +%s 2>/dev/null || echo "0")
+    if [ "$_current_epoch" != "$_LOG_TIMESTAMP_EPOCH" ]; then
+        _LOG_TIMESTAMP_CACHE=$(date -u "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date "+%Y-%m-%dT%H:%M:%S")
+        _LOG_TIMESTAMP_EPOCH="$_current_epoch"
+    fi
+    _timestamp="$_LOG_TIMESTAMP_CACHE"
 
     # Pad component to 10 chars for alignment
     _comp=$(printf "%-10s" "$_LOG_COMPONENT")
@@ -110,7 +117,13 @@ log_error() {
 # Log a section separator — always outputs regardless of level
 log_separator() {
     _action="${1:-}"
-    _timestamp=$(date -u "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date "+%Y-%m-%dT%H:%M:%S")
+    # Reuse timestamp cache
+    _current_epoch=$(date +%s 2>/dev/null || echo "0")
+    if [ "$_current_epoch" != "$_LOG_TIMESTAMP_EPOCH" ]; then
+        _LOG_TIMESTAMP_CACHE=$(date -u "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date "+%Y-%m-%dT%H:%M:%S")
+        _LOG_TIMESTAMP_EPOCH="$_current_epoch"
+    fi
+    _timestamp="$_LOG_TIMESTAMP_CACHE"
     _comp=$(printf "%-10s" "$_LOG_COMPONENT")
     _conn=$(printf "%-16s" "$_LOG_CONNECTION")
     _line="${_timestamp} [-----] [${_comp}] [${_conn}] ──── ${_action} ────"
