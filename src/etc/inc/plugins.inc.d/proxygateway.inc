@@ -127,8 +127,30 @@ function proxygateway_prepare($device)
 }
 
 /**
- * Register a virtual interface group for all proxy gateway connections.
- * This allows OPNsense to show a "Proxy Gateway (Group)" interface.
+ * Calculate the deterministic TUN address for a connection name.
+ * Uses the same algorithm as setup.sh to ensure consistency.
+ *
+ * @param string $name       Connection name
+ * @param string $tunAddress Optional explicit TUN address from config
+ * @return string IPv4 address in 172.31.0.0/16 range
+ */
+function proxygateway_tun_address($name, $tunAddress = '')
+{
+    if (!empty($tunAddress)) {
+        return $tunAddress;
+    }
+    $hash = md5($name);
+    $oct3 = (hexdec(substr($hash, 0, 2)) % 254) + 1;
+    $oct4 = (hexdec(substr($hash, 2, 2)) % 126) * 2 + 1;
+    return "172.31.{$oct3}.{$oct4}";
+}
+
+/**
+ * Register virtual interfaces for proxy gateway connections.
+ *
+ * Registers each enabled connection as an individual virtual interface
+ * with its IP address, so OPNsense can create functional gateways.
+ * Also registers a group interface for all proxy gateways.
  */
 function proxygateway_interfaces()
 {
@@ -138,6 +160,29 @@ function proxygateway_interfaces()
         return $interfaces;
     }
 
+    $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
+    foreach ($mdl->connections->connection->iterateItems() as $uuid => $conn) {
+        if (empty((string)$conn->enabled)) {
+            continue;
+        }
+
+        $name = (string)$conn->name;
+        $ifname = "pgw_{$name}";
+        $tunAddr = proxygateway_tun_address($name, (string)$conn->tunAddress);
+
+        $interfaces[$ifname] = [
+            'descr'    => (string)$conn->description ?: "Proxy Gateway - {$name}",
+            'if'       => $ifname,
+            'virtual'  => true,
+            'enable'   => true,
+            'type'     => 'proxygateway',
+            'ipaddr'   => $tunAddr,
+            'subnet'   => '32',
+            'networks' => ["{$tunAddr}/32"],
+        ];
+    }
+
+    // Group interface for all proxy gateways
     $interfaces['proxygateway'] = [
         'descr'   => gettext('Proxy Gateway (Group)'),
         'if'      => 'proxygateway',
@@ -153,19 +198,61 @@ function proxygateway_interfaces()
 /**
  * Firewall integration hook.
  *
- * Note: Firewall rules and NAT configuration for proxy gateway connections
- * should be configured manually through the OPNsense web UI as documented
- * in the user guide. The plugin registers tunnel interfaces and gateways,
- * which can then be used in user-defined firewall rules.
- *
- * This function is kept as a placeholder for potential future automatic
- * rule generation if the OPNsense Firewall Plugin API supports it.
+ * Generates automatic firewall rules for proxy gateway connections:
+ * 1. Anti-routing-loop: Ensures tun2socks traffic to the proxy server exits
+ *    through the correct physical interface, not through its own TUN.
+ * 2. Pass rules on pgw_* interfaces: Allows tunnel traffic in both directions.
  */
 function proxygateway_firewall(\OPNsense\Firewall\Plugin $fw)
 {
-    // Firewall rules are configured manually by users via the web UI.
-    // See docs/USER_GUIDE_COMPREHENSIVE.md for firewall rule examples.
-    return;
+    if (!proxygateway_enabled()) {
+        return;
+    }
+
+    $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
+    foreach ($mdl->connections->connection->iterateItems() as $uuid => $conn) {
+        if (empty((string)$conn->enabled)) {
+            continue;
+        }
+
+        $name = (string)$conn->name;
+        $ifname = "pgw_{$name}";
+        $proxyServer = (string)$conn->proxyServer;
+        $proxyPort = (string)$conn->proxyPort;
+
+        // Rule 1: Anti-routing-loop — ensure tun2socks traffic to the proxy
+        // server exits through the correct physical interface, not the TUN.
+        // Without this, policy routing rules could capture tun2socks's own
+        // connection to the proxy, creating a routing loop.
+        $fw->registerFilterRule(
+            1,
+            [
+                'ipprotocol' => 'inet',
+                'protocol'   => 'tcp',
+                'from'       => '(self)',
+                'to'         => $proxyServer,
+                'to_port'    => $proxyPort,
+                'direction'  => 'out',
+                'quick'      => true,
+                '#ref'       => "pgw_{$name}_antiloop",
+                'descr'      => "Proxy Gateway: anti-loop {$name}",
+                'log'        => false,
+            ]
+        );
+
+        // Rule 2: Allow all traffic on the pgw_* TUN interface.
+        // Ensures tunnel traffic is not blocked by default deny rules.
+        $fw->registerFilterRule(
+            2,
+            [
+                'ipprotocol' => 'inet',
+                'interface'  => $ifname,
+                '#ref'       => "pgw_{$name}_pass",
+                'descr'      => "Proxy Gateway: pass tunnel {$name}",
+                'log'        => false,
+            ]
+        );
+    }
 }
 
 /**
@@ -180,6 +267,57 @@ function proxygateway_configure()
 }
 
 /**
+ * Sync IP configuration for assigned proxy gateway interfaces.
+ *
+ * When a user assigns a pgw_* interface in Interfaces → Assignments,
+ * OPNsense creates a config entry but without IP configuration.
+ * This function auto-populates the correct tunnel IP address so the
+ * associated gateway is functional (not "defunct").
+ */
+function proxygateway_sync_interfaces()
+{
+    global $config;
+
+    if (!isset($config['interfaces'])) {
+        return;
+    }
+
+    $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
+    $changed = false;
+
+    foreach ($mdl->connections->connection->iterateItems() as $uuid => $conn) {
+        if (empty((string)$conn->enabled)) {
+            continue;
+        }
+
+        $name = (string)$conn->name;
+        $ifname = "pgw_{$name}";
+        $tunAddr = proxygateway_tun_address($name, (string)$conn->tunAddress);
+
+        // Find this interface in OPNsense's assigned interfaces
+        foreach ($config['interfaces'] as $ifkey => &$iface) {
+            if (isset($iface['if']) && $iface['if'] === $ifname) {
+                // Auto-configure IP if missing or changed
+                if (empty($iface['ipaddr']) || $iface['ipaddr'] !== $tunAddr) {
+                    $iface['ipaddr'] = $tunAddr;
+                    $iface['subnet'] = '32';
+                    if (empty($iface['enable'])) {
+                        $iface['enable'] = '1';
+                    }
+                    $changed = true;
+                }
+                break;
+            }
+        }
+        unset($iface);
+    }
+
+    if ($changed) {
+        write_config('Proxy Gateway: auto-configure interface IP addresses');
+    }
+}
+
+/**
  * Configuration handler called on system events.
  */
 function proxygateway_configure_do($verbose = false)
@@ -189,6 +327,7 @@ function proxygateway_configure_do($verbose = false)
     }
 
     service_log('Configuring Proxy Gateway...', $verbose);
+    proxygateway_sync_interfaces();
     configd_run('proxygateway reconfigure');
     service_log("done.\n", $verbose);
 }
