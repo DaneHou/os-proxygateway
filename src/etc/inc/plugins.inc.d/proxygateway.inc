@@ -356,8 +356,140 @@ function proxygateway_sync_interfaces()
         }
     }
 
+    proxygateway_sync_gateways($mdl, $xml, $changed);
+
     if ($changed) {
         $configObj->save();
+    }
+}
+
+/**
+ * Sync gateway entries in config.xml for proxy gateway connections.
+ *
+ * Creates/updates <gateway_item> entries named PROXYGW_{NAME} with fargw=1
+ * (point-to-point /32 subnet compatibility) and monitor_disable=1 (SOCKS5
+ * doesn't support ICMP; the plugin uses its own HTTP health check).
+ *
+ * Also removes orphaned PROXYGW_* entries for disabled/deleted connections
+ * and writes /tmp/pgw_{name}_router as a fallback for auto-detection.
+ *
+ * @param \OPNsense\ProxyGateway\ProxyGateway $mdl     Plugin model
+ * @param \SimpleXMLElement                    $xml     Config XML root
+ * @param bool                                 &$changed Set to true if config was modified
+ */
+function proxygateway_sync_gateways($mdl, $xml, &$changed)
+{
+    if (!isset($xml->interfaces)) {
+        return;
+    }
+
+    // Ensure <gateways> section exists
+    if (!isset($xml->gateways)) {
+        $xml->addChild('gateways');
+    }
+
+    // Build map of expected gateway names for enabled connections with assigned interfaces
+    $expectedGateways = [];
+
+    foreach ($mdl->connections->connection->iterateItems() as $uuid => $conn) {
+        if (empty((string)$conn->enabled)) {
+            continue;
+        }
+
+        $name = (string)$conn->name;
+        $ifname = "pgw_{$name}";
+        $tunAddr = proxygateway_tun_address($name, (string)$conn->tunAddress);
+        $gwName = 'PROXYGW_' . strtoupper($name);
+
+        // Calculate peer IP (gateway) = local IP + 1 on last octet
+        $parts = explode('.', $tunAddr);
+        $parts[3] = (int)$parts[3] + 1;
+        $peerIp = implode('.', $parts);
+
+        $priority = (string)$conn->gatewayPriority;
+        if (empty($priority)) {
+            $priority = '255';
+        }
+
+        // Find the assigned OPNsense interface key (e.g. opt4)
+        $assignedKey = null;
+        foreach ($xml->interfaces->children() as $ifkey => $iface) {
+            if ((string)$iface->{'if'} === $ifname) {
+                $assignedKey = $ifkey;
+                break;
+            }
+        }
+
+        if ($assignedKey === null) {
+            continue;
+        }
+
+        $expectedGateways[$gwName] = [
+            'interface'       => $assignedKey,
+            'gateway'         => $peerIp,
+            'name'            => $gwName,
+            'priority'        => $priority,
+            'ipprotocol'      => 'inet',
+            'fargw'           => '1',
+            'monitor_disable' => '1',
+            'descr'           => "Proxy Gateway: {$name}",
+        ];
+
+        // Write _router file as fallback for auto-detection
+        $routerFile = "/tmp/{$ifname}_router";
+        @file_put_contents($routerFile, $peerIp);
+        @chmod($routerFile, 0644);
+    }
+
+    // Update or create gateway_item entries
+    foreach ($expectedGateways as $gwName => $gwData) {
+        $found = false;
+        foreach ($xml->gateways->children() as $gw) {
+            if ($gw->getName() !== 'gateway_item') {
+                continue;
+            }
+            if ((string)$gw->name === $gwName) {
+                $found = true;
+                // Update existing entry if anything changed
+                $fields = ['interface', 'gateway', 'priority', 'ipprotocol', 'fargw', 'monitor_disable', 'descr'];
+                foreach ($fields as $field) {
+                    if ((string)$gw->{$field} !== $gwData[$field]) {
+                        if (isset($gw->{$field})) {
+                            $gw->{$field} = $gwData[$field];
+                        } else {
+                            $gw->addChild($field, $gwData[$field]);
+                        }
+                        $changed = true;
+                    }
+                }
+                break;
+            }
+        }
+
+        if (!$found) {
+            $gw = $xml->gateways->addChild('gateway_item');
+            foreach ($gwData as $field => $value) {
+                $gw->addChild($field, $value);
+            }
+            $changed = true;
+        }
+    }
+
+    // Remove orphaned PROXYGW_* entries
+    $toRemove = [];
+    foreach ($xml->gateways->children() as $gw) {
+        if ($gw->getName() !== 'gateway_item') {
+            continue;
+        }
+        $name = (string)$gw->name;
+        if (strpos($name, 'PROXYGW_') === 0 && !isset($expectedGateways[$name])) {
+            $toRemove[] = $gw;
+        }
+    }
+    foreach ($toRemove as $gw) {
+        $dom = dom_import_simplexml($gw);
+        $dom->parentNode->removeChild($dom);
+        $changed = true;
     }
 }
 
