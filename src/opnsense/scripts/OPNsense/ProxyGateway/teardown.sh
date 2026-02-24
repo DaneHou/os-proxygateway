@@ -70,9 +70,11 @@ else
     log_info "No PID file found — process may already be stopped"
 fi
 
-# Step 2: Remove router file (deregisters gateway)
-rm -f "/var/run/${IFACE}_router"
-log_debug "Removed router file"
+# Step 2: Remove router and monitor files (deregisters gateway)
+# OPNsense reads these from /tmp/ (Autoconf::getRouter())
+rm -f "/tmp/${IFACE}_router"
+rm -f "/tmp/${IFACE}_monitorip"
+log_debug "Removed router and monitor files"
 
 # Step 3: Destroy tun interface
 if ifconfig "$IFACE" >/dev/null 2>&1; then

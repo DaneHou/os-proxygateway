@@ -40,11 +40,13 @@
                 </description>
 
                 <!-- Upstream proxy settings -->
-                <proxyInterface type="TextField">
+                <proxyInterface type="InterfaceField">
                     <Required>N</Required>
                     <default>wan</default>
-                    <Mask>/^[a-zA-Z0-9_]{1,32}$/</Mask>
-                    <ValidationMessage>Enter a valid OPNsense interface name (e.g., wan, lan, opt1)</ValidationMessage>
+                    <filters>
+                        <enable>/^1$/</enable>
+                    </filters>
+                    <ValidationMessage>Select the interface through which the proxy server is reachable</ValidationMessage>
                 </proxyInterface>
 
                 <proxyType type="OptionField">

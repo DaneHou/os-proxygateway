@@ -108,6 +108,9 @@ def run_setup(conn):
     if conn.get("dnsServer"):
         cmd.extend(["--dns-server", conn["dnsServer"]])
 
+    if conn.get("proxyInterface"):
+        cmd.extend(["--proxy-iface", conn["proxyInterface"]])
+
     if conn.get("logLevel"):
         cmd.extend(["--loglevel", conn["logLevel"]])
 
@@ -183,6 +186,7 @@ def connection_changed(desired, running_config):
         ("proxyType", "PROXY_TYPE"),
         ("proxyServer", "PROXY_ADDR"),
         ("proxyPort", "PROXY_PORT"),
+        ("proxyInterface", "PROXY_IFACE"),
     ]
     for desired_key, running_key in checks:
         if str(desired.get(desired_key, "")) != str(running_config.get(running_key, "")):
