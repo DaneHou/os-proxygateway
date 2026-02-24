@@ -99,8 +99,17 @@ class ServiceController extends ApiMutableServiceControllerBase
             // Re-register interfaces so OPNsense picks up new/removed devices
             $backend->configdRun('interface invoke registration');
 
-            // Apply the desired config
+            // Apply the desired config (creates TUN devices, writes _router files)
             $response = trim($backend->configdpRun('proxygateway reconfigure'));
+
+            // Sync interface IPs into config.xml so OPNsense's gateway system
+            // can detect the gateways. Without this, get_interface_ip() returns
+            // null for assigned pgw_* interfaces and gateways show as "defunct".
+            $backend->configdRun('proxygateway sync');
+
+            // Reconfigure routes to pick up gateways with the updated IPs.
+            // This must run AFTER sync so the gateway system sees the IPs.
+            $backend->configdRun('interface routes reconfigure');
 
             $result = ['status' => 'ok', 'response' => $response];
         }
