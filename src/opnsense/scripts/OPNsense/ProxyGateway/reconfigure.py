@@ -261,19 +261,6 @@ def main():
         if run_setup(desired[name]) == 0:
             run_healthcheck(desired[name])
 
-    # Trigger route reconfiguration once after all changes
-    if to_stop or to_start or to_restart:
-        log.info("Triggering route reconfiguration...")
-        try:
-            subprocess.run(
-                ["/usr/local/sbin/configctl", "interface", "routes", "reconfigure"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                timeout=30
-            )
-            log.debug("Route reconfiguration completed")
-        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-            log.warning("Route reconfiguration failed: %s", e)
-
     # Summary
     unchanged = to_check - to_restart
     parts = []

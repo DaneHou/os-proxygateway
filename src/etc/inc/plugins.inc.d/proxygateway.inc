@@ -268,16 +268,19 @@ function proxygateway_firewall(\OPNsense\Firewall\Plugin $fw)
 /**
  * Register events to hook into during system operations.
  *
- * 'newwanip' and 'vpn' trigger full reconfigure (sync IPs + restart tunnels).
  * 'bootup' ensures interface IPs are synced in config after reboot, so
  * gateways are not "defunct" when services start.
+ *
+ * 'newwanip' and 'vpn' are intentionally NOT handled here — proxy tunnels
+ * connect via a fixed proxy IP/hostname and use static TUN IPs, so WAN/VPN
+ * changes don't require reconfiguration. Handling 'newwanip' would also
+ * create a feedback loop: reconfigure -> route change -> WAN DHCP renewal
+ * -> newwanip -> reconfigure -> ...
  */
 function proxygateway_configure()
 {
     return [
-        'bootup'   => ['proxygateway_sync_only:2'],
-        'newwanip' => ['proxygateway_configure_do'],
-        'vpn'      => ['proxygateway_configure_do'],
+        'bootup' => ['proxygateway_sync_only:2'],
     ];
 }
 
