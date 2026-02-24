@@ -151,46 +151,28 @@ log_info "DNS mode: ${DNS_MODE}${DNS_SERVER:+ (server: $DNS_SERVER)}"
 # Step 1: Create tun device
 # On FreeBSD, tun devices must be created via the tun cloner, then renamed.
 # "ifconfig <custom_name> create" does NOT work for tun devices.
-# We create a tunN device, rename it, and pass the original name to tun2socks
-# so it can open /dev/tunN (which still exists after renaming).
-TUN_DEV=""
+# We always create a fresh device to avoid stale /dev/tunN references.
+# The rename happens AFTER tun2socks opens the device (see Step 3).
+
+# Destroy any existing interface to ensure a clean state
 if ifconfig "$IFACE" >/dev/null 2>&1; then
-    log_info "Interface $IFACE already exists"
-    if [ -f "$TUNDEVFILE" ]; then
-        TUN_DEV=$(cat "$TUNDEVFILE")
-        log_debug "Using saved tun device: $TUN_DEV"
-    else
-        log_info "No saved tun device found, recreating..."
-        ifconfig "$IFACE" destroy 2>/dev/null || true
-    fi
+    log_info "Destroying existing interface $IFACE for clean setup"
+    ifconfig "$IFACE" destroy 2>/dev/null || true
 fi
 
-if [ -z "$TUN_DEV" ] || ! [ -c "/dev/${TUN_DEV}" ]; then
-    log_info "Creating tun device..."
-    TUN_DEV=$(ifconfig tun create)
-    if [ -z "$TUN_DEV" ]; then
-        log_error "Failed to create tun device"
-        exit 1
-    fi
-    log_debug "Created $TUN_DEV, renaming to $IFACE..."
-    ifconfig "$TUN_DEV" name "$IFACE" || {
-        log_error "Failed to rename $TUN_DEV to $IFACE"
-        ifconfig "$TUN_DEV" destroy 2>/dev/null || true
-        exit 1
-    }
-    echo "$TUN_DEV" > "$TUNDEVFILE"
+log_info "Creating tun device..."
+TUN_DEV=$(ifconfig tun create)
+if [ -z "$TUN_DEV" ]; then
+    log_error "Failed to create tun device"
+    exit 1
 fi
+log_debug "Created $TUN_DEV (will rename to $IFACE after tun2socks starts)"
+echo "$TUN_DEV" > "$TUNDEVFILE"
 
-# Add to proxygateway interface group
-ifconfig "$IFACE" group proxygateway 2>/dev/null || true
-
-log_info "Configuring $IFACE: ${TUN_LOCAL} <-> ${TUN_PEER} mtu ${TUN_MTU}"
-ifconfig "$IFACE" inet "$TUN_LOCAL" "$TUN_PEER" mtu "$TUN_MTU" up
-log_debug "Device ${IFACE} configured: ${TUN_LOCAL}/${TUN_PEER}"
-
-# Step 2: Start tun2socks
-# Pass the original tun device name (e.g., tun0) so tun2socks opens /dev/tun0.
-# The /dev/tunN node persists even after the interface is renamed to pgw_xxx.
+# Step 2: Start tun2socks BEFORE renaming the interface.
+# On FreeBSD, /dev/tunN is removed when the interface is renamed, so tun2socks
+# must open the device while it still has its original name. The open fd remains
+# valid even after the rename.
 log_info "Starting tun2socks (device=$TUN_DEV, loglevel: ${LOGLEVEL})..."
 
 # Build tun2socks command with optional UDP timeout
@@ -211,17 +193,37 @@ T2S_PID=$!
 echo "$T2S_PID" > "$PIDFILE"
 log_debug "tun2socks spawned with PID $T2S_PID"
 
-# Wait briefly and verify the process is still alive
-sleep 0.1
+# Wait for tun2socks to open /dev/tunN before we rename the interface
+sleep 0.3
 if ! kill -0 "$T2S_PID" 2>/dev/null; then
     log_error "tun2socks failed to start — check ${LOGFILE} for details"
     tail -20 "$LOGFILE" 2>/dev/null || true
     rm -f "$PIDFILE" "$TUNDEVFILE"
-    ifconfig "$IFACE" destroy 2>/dev/null || true
+    ifconfig "$TUN_DEV" destroy 2>/dev/null || true
     exit 1
 fi
 
-# Step 3: Write router and monitor files for OPNsense gateway auto-detection
+# Step 3: Rename the interface AFTER tun2socks has opened /dev/tunN.
+# The fd tun2socks holds remains valid even after /dev/tunN is removed by rename.
+if [ "$TUN_DEV" != "$IFACE" ]; then
+    log_debug "Renaming $TUN_DEV to $IFACE..."
+    ifconfig "$TUN_DEV" name "$IFACE" || {
+        log_error "Failed to rename $TUN_DEV to $IFACE"
+        kill "$T2S_PID" 2>/dev/null || true
+        rm -f "$PIDFILE" "$TUNDEVFILE"
+        ifconfig "$TUN_DEV" destroy 2>/dev/null || true
+        exit 1
+    }
+fi
+
+# Add to proxygateway interface group
+ifconfig "$IFACE" group proxygateway 2>/dev/null || true
+
+log_info "Configuring $IFACE: ${TUN_LOCAL} <-> ${TUN_PEER} mtu ${TUN_MTU}"
+ifconfig "$IFACE" inet "$TUN_LOCAL" "$TUN_PEER" mtu "$TUN_MTU" up
+log_debug "Device ${IFACE} configured: ${TUN_LOCAL}/${TUN_PEER}"
+
+# Step 4: Write router and monitor files for OPNsense gateway auto-detection
 # OPNsense's Autoconf::getRouter() reads from /tmp/{interface}_router
 ROUTER_FILE="/tmp/${IFACE}_router"
 echo "$TUN_PEER" > "$ROUTER_FILE"
@@ -238,7 +240,7 @@ echo "$PROXY_ADDR" > "$MONITOR_FILE"
 chmod 644 "$MONITOR_FILE"
 log_debug "Wrote monitor IP file: ${MONITOR_FILE} -> ${PROXY_ADDR}"
 
-# Step 4: Save connection config for status/teardown/healthcheck
+# Step 5: Save connection config for status/teardown/healthcheck
 # Note: PROXY_URL contains credentials, so secure this file
 cat > "$CONFFILE" <<EOF
 NAME="${NAME}"
@@ -264,7 +266,7 @@ log_debug "Saved connection config to ${CONFFILE} (secure permissions)"
 # Also secure the tundev file
 chmod 600 "$TUNDEVFILE" 2>/dev/null || true
 
-# Step 5: Trigger OPNsense route reconfiguration (unless deferred for batch operations)
+# Step 6: Trigger OPNsense route reconfiguration (unless deferred for batch operations)
 if [ "$DEFER_ROUTES" = "no" ]; then
     /usr/local/sbin/configctl interface routes reconfigure >/dev/null 2>&1 || true
     log_debug "Triggered route reconfiguration"
