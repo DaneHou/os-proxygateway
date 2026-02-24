@@ -76,8 +76,9 @@ install-plugin:
 	@mkdir -p $(SCRIPTS_DIR)/lib
 	@cp src/opnsense/scripts/OPNsense/ProxyGateway/*.sh $(SCRIPTS_DIR)/
 	@cp src/opnsense/scripts/OPNsense/ProxyGateway/*.py $(SCRIPTS_DIR)/
+	@cp src/opnsense/scripts/OPNsense/ProxyGateway/*.php $(SCRIPTS_DIR)/
 	@cp src/opnsense/scripts/OPNsense/ProxyGateway/lib/*.sh $(SCRIPTS_DIR)/lib/
-	@chmod +x $(SCRIPTS_DIR)/*.sh $(SCRIPTS_DIR)/*.py
+	@chmod +x $(SCRIPTS_DIR)/*.sh $(SCRIPTS_DIR)/*.py $(SCRIPTS_DIR)/*.php
 
 	# Log rotation
 	@mkdir -p $(DESTDIR)/etc/newsyslog.conf.d
