@@ -5,9 +5,9 @@ status.py — Output JSON status of all proxy gateway connections.
 Called by configd: configctl proxygateway status
 """
 
-import glob
 import json
 import os
+import subprocess
 import sys
 
 RUNDIR = "/var/run/proxygateway"
@@ -17,7 +17,17 @@ def get_status():
     """Collect status of all connections."""
     connections = []
 
-    for conf_path in sorted(glob.glob(os.path.join(RUNDIR, "*.conf"))):
+    # Use os.scandir() instead of glob.glob() for better performance
+    if not os.path.isdir(RUNDIR):
+        return {"connections": connections}
+
+    conf_files = []
+    with os.scandir(RUNDIR) as entries:
+        for entry in entries:
+            if entry.is_file() and entry.name.endswith(".conf"):
+                conf_files.append(entry.path)
+
+    for conf_path in sorted(conf_files):
         name = os.path.basename(conf_path).replace(".conf", "")
 
         # Read connection config
@@ -53,10 +63,14 @@ def get_status():
                         key, val = line.split("=", 1)
                         health[key] = val
 
-        # Check interface
+        # Check interface - use subprocess for better control
         iface = config.get("IFACE", f"pgw_{name}")
-        iface_exists = os.path.exists(f"/dev/{iface}") or \
-            os.system(f"ifconfig {iface} >/dev/null 2>&1") == 0
+        try:
+            subprocess.run(["ifconfig", iface], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, check=True, timeout=1)
+            iface_exists = True
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+            iface_exists = False
 
         # Determine status using both process state and health check results.
         # Process/interface down = definitely down.
