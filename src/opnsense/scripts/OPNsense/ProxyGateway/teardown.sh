@@ -71,8 +71,9 @@ else
 fi
 
 # Step 2: Remove router and monitor files (deregisters gateway)
-rm -f "/var/run/${IFACE}_router"
-rm -f "/var/run/${IFACE}_monitorip"
+# OPNsense reads these from /tmp/ (Autoconf::getRouter())
+rm -f "/tmp/${IFACE}_router"
+rm -f "/tmp/${IFACE}_monitorip"
 log_debug "Removed router and monitor files"
 
 # Step 3: Destroy tun interface
