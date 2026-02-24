@@ -148,9 +148,16 @@ function proxygateway_tun_address($name, $tunAddress = '')
 /**
  * Register virtual interfaces for proxy gateway connections.
  *
- * Registers each enabled connection as an individual virtual interface
- * with its IP address, so OPNsense can create functional gateways.
- * Also registers a group interface for all proxy gateways.
+ * Only registers the group interface here. Individual pgw_* interfaces
+ * are NOT registered as virtual interfaces — they are registered via
+ * proxygateway_devices() instead, which makes them available in
+ * Interfaces > Assignments for the user to assign manually.
+ *
+ * This matches the WireGuard pattern: wireguard_interfaces() only
+ * returns the group, individual wg* devices are in wireguard_devices().
+ *
+ * After the user assigns a pgw_* interface, proxygateway_sync_interfaces()
+ * auto-configures the IP address so the gateway becomes functional.
  */
 function proxygateway_interfaces()
 {
@@ -158,28 +165,6 @@ function proxygateway_interfaces()
 
     if (!proxygateway_enabled()) {
         return $interfaces;
-    }
-
-    $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
-    foreach ($mdl->connections->connection->iterateItems() as $uuid => $conn) {
-        if (empty((string)$conn->enabled)) {
-            continue;
-        }
-
-        $name = (string)$conn->name;
-        $ifname = "pgw_{$name}";
-        $tunAddr = proxygateway_tun_address($name, (string)$conn->tunAddress);
-
-        $interfaces[$ifname] = [
-            'descr'    => (string)$conn->description ?: "Proxy Gateway - {$name}",
-            'if'       => $ifname,
-            'virtual'  => true,
-            'enable'   => true,
-            'type'     => 'proxygateway',
-            'ipaddr'   => $tunAddr,
-            'subnet'   => '32',
-            'networks' => ["{$tunAddr}/32"],
-        ];
     }
 
     // Group interface for all proxy gateways
@@ -240,19 +225,44 @@ function proxygateway_firewall(\OPNsense\Firewall\Plugin $fw)
             ]
         );
 
-        // Rule 2: Allow all traffic on the pgw_* TUN interface.
-        // Ensures tunnel traffic is not blocked by default deny rules.
-        $fw->registerFilterRule(
-            2,
-            [
-                'ipprotocol' => 'inet',
-                'interface'  => $ifname,
-                '#ref'       => "pgw_{$name}_pass",
-                'descr'      => "Proxy Gateway: pass tunnel {$name}",
-                'log'        => false,
-            ]
-        );
+        // Rule 2: Allow traffic on the pgw_* TUN interface.
+        // If the user has assigned the interface (via Interfaces > Assignments),
+        // use the assigned OPNsense identifier. Otherwise, skip per-interface
+        // rules — the group pass rule below covers unassigned interfaces.
+        $intf_id = null;
+        foreach (legacy_config_get_interfaces() as $id => $cfg) {
+            if (isset($cfg['if']) && $cfg['if'] === $ifname) {
+                $intf_id = $id;
+                break;
+            }
+        }
+
+        if ($intf_id !== null) {
+            $fw->registerFilterRule(
+                2,
+                [
+                    'ipprotocol' => 'inet',
+                    'interface'  => $intf_id,
+                    '#ref'       => "pgw_{$name}_pass",
+                    'descr'      => "Proxy Gateway: pass tunnel {$name}",
+                    'log'        => false,
+                ]
+            );
+        }
     }
+
+    // Group pass rule: allow traffic on the proxygateway group interface.
+    // Covers any pgw_* interface that is NOT assigned in Interfaces > Assignments.
+    $fw->registerFilterRule(
+        2,
+        [
+            'ipprotocol' => 'inet',
+            'interface'  => 'proxygateway',
+            '#ref'       => 'pgw_group_pass',
+            'descr'      => 'Proxy Gateway: pass group traffic',
+            'log'        => false,
+        ]
+    );
 }
 
 /**
