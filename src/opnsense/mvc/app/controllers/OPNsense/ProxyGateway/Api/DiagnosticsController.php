@@ -192,7 +192,7 @@ class DiagnosticsController extends ApiControllerBase
         $result = ['status' => 'failed'];
 
         if ($this->request->isPost()) {
-            $name = $this->request->getPost('name', 'alphanum', '');
+            $name = $this->request->getPost('name', null, '');
 
             $backend = new \OPNsense\Core\Backend();
             $response = trim($backend->configdRun("proxygateway clearlogs {$name}"));
