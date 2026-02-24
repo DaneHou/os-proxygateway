@@ -65,7 +65,8 @@ Then navigate to **Services → Proxy Gateway → Connections** in the OPNsense 
 
 - Detailed installation instructions
 - How to configure proxy connections
-- How to route traffic for specific devices (same LAN or different LAN/VLAN)
+- How to route a specific device by IP (same LAN or isolated VLAN/LAN)
+- How to route traffic from an isolated IoT LAN through a LAN-side proxy (e.g., Tailscale SOCKS5 on LAN2 serving devices on a blocked LAN3)
 - Kill switch and traffic blocking configuration
 - Firewall rule examples with network topology diagrams
 - Gateway groups for failover and load balancing

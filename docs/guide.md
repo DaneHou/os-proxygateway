@@ -94,6 +94,7 @@ make uninstall
 | **Enabled** | Activate this connection | ✓ |
 | **Name** | Alphanumeric identifier (max 16 chars) | `vpn1` |
 | **Description** | Friendly name | `US East Proxy` |
+| **Proxy Server Interface** | OPNsense interface the proxy is reachable through (default: `wan`). Set to the LAN interface name if the proxy is on a local network (e.g., `opt1` for a Tailscale proxy on LAN2). Find the name under **Interfaces → Assignments** | `wan` |
 | **Proxy Type** | Protocol | SOCKS5 / HTTP / HTTPS |
 | **Proxy Server** | IP or hostname of the proxy | `203.0.113.10` |
 | **Proxy Port** | Port number | `1080` |
@@ -125,24 +126,43 @@ Click **Test** next to a connection to run an on-demand health check.
 The core use case: force traffic from specific devices or networks through a proxy
 gateway. This is all done through standard OPNsense firewall rules.
 
+### ⚠️ Important: How to set the Gateway field in OPNsense
+
+The **Gateway** field in OPNsense's firewall rule editor is **hidden by default**.
+When adding or editing a rule, you must click **"Display Advanced"** (the triangle /
+arrow button near the top of the form, sometimes labelled "Advanced Options" or
+"Show Advanced Options") to reveal it.
+
+Once you click Display Advanced, scroll down to the **Gateway** row and select your
+proxy gateway (e.g., `PROXYGW_VPN1`) from the dropdown.
+
+If the gateway does not appear in the dropdown, make sure:
+- The proxy connection is enabled and the status is **Online** in Diagnostics.
+- You have clicked **Apply** after saving the connection.
+- The `PROXYGW_<NAME>` gateway appears in **System → Gateways → Single**.
+
 ### Route a Specific Device (Same LAN)
 
 **Scenario**: You have a device at `10.0.1.50` on your LAN and want all its traffic
 to go through proxy connection `vpn1`.
 
 1. Go to **Firewall → Rules → LAN**
-2. Add a new rule:
+2. Click **+** (Add rule) to open the rule editor
+3. Fill in the **basic** fields at the top of the form:
 
-| Setting | Value |
-|---------|-------|
-| Action | Pass |
-| Interface | LAN |
-| Direction | in |
-| Source | Single host: `10.0.1.50` |
-| Destination | any |
-| Gateway | `PROXYGW_VPN1` |
+   | Setting | Value |
+   |---------|-------|
+   | Action | Pass |
+   | Interface | LAN |
+   | Direction | in |
+   | TCP/IP Version | IPv4 |
+   | Protocol | any |
+   | Source | Single host or Network → `10.0.1.50` |
+   | Destination | any |
 
-3. Save and Apply.
+4. Click **Display Advanced** (the triangle button near the top of the form)
+5. In the **Gateway** field that appears, select **`PROXYGW_VPN1`**
+6. Click **Save**, then click **Apply Changes**
 
 All traffic from `10.0.1.50` now routes through the `vpn1` proxy. The device itself
 needs no configuration changes.
@@ -151,7 +171,8 @@ needs no configuration changes.
 
 **Scenario**: Route an entire subnet `10.0.1.0/24` through the proxy.
 
-Same as above, but set **Source** to `10.0.1.0/24` (network).
+Follow the same steps above, but in step 3 set **Source** to
+`Network → 10.0.1.0/24` instead of a single host.
 
 ### Route a VLAN (Different LAN Segment)
 
@@ -161,32 +182,35 @@ want all its traffic proxied.
 1. Ensure the VLAN interface is configured in OPNsense
    (**Interfaces → Assignments → VLANs**)
 2. Go to **Firewall → Rules → [VLAN30 interface]**
-3. Add a rule:
+3. Click **+**, fill in:
 
-| Setting | Value |
-|---------|-------|
-| Action | Pass |
-| Interface | VLAN30 (or whatever you named it) |
-| Source | VLAN30 net |
-| Destination | any |
-| Gateway | `PROXYGW_VPN1` |
+   | Setting | Value |
+   |---------|-------|
+   | Action | Pass |
+   | Interface | VLAN30 (or whatever you named it) |
+   | Direction | in |
+   | Source | VLAN30 net |
+   | Destination | any |
 
-4. Save and Apply.
+4. Click **Display Advanced**, set **Gateway** to `PROXYGW_VPN1`
+5. Save, then Apply Changes.
 
 ### Route Multiple Devices Through Different Proxies
 
 **Scenario**: Device A goes through proxy1, Device B goes through proxy2.
 
 Create two proxy connections (`proxy1`, `proxy2`), then create two firewall rules
-on your LAN interface:
+on your LAN interface (following the steps in "Route a Specific Device" above for
+each, with the appropriate gateway):
 
-**Rule 1** (higher priority — place first):
+**Rule 1** (higher priority — drag to top):
 - Source: Device A IP → Gateway: `PROXYGW_PROXY1`
 
 **Rule 2**:
 - Source: Device B IP → Gateway: `PROXYGW_PROXY2`
 
-Firewall rules are evaluated top-to-bottom. The first matching rule wins.
+OPNsense evaluates firewall rules top-to-bottom — the first matching rule wins. Use
+the drag handles on the left of the rule list to reorder rules.
 
 ### Route Traffic from a Different Subnet/LAN
 
@@ -195,20 +219,158 @@ OPNsense routes between them. You want LAN2 traffic to go through the proxy.
 
 1. Ensure both LAN interfaces are configured in OPNsense.
 2. Go to **Firewall → Rules → LAN2**
-3. Add a rule:
+3. Click **+**, fill in:
 
-| Setting | Value |
-|---------|-------|
-| Action | Pass |
-| Interface | LAN2 |
-| Source | LAN2 net |
-| Destination | any |
-| Gateway | `PROXYGW_VPN1` |
+   | Setting | Value |
+   |---------|-------|
+   | Action | Pass |
+   | Interface | LAN2 |
+   | Direction | in |
+   | Source | LAN2 net |
+   | Destination | any |
 
-4. Save and Apply.
+4. Click **Display Advanced**, set **Gateway** to `PROXYGW_VPN1`
+5. Save, then Apply Changes.
 
 **Important**: OPNsense must be the default gateway for devices on LAN2 for this
 to work. If devices on LAN2 use a different gateway, OPNsense never sees their traffic.
+
+### Route an Isolated IoT LAN Through a LAN-side Proxy (e.g., Tailscale SOCKS5)
+
+**Scenario**: You have two LAN segments — LAN2 (`10.0.2.0/24`, your main network) and
+LAN3 (`10.0.3.0/24`, IoT devices). OPNsense has a block rule preventing LAN3 from
+directly accessing LAN2. You are running a Tailscale SOCKS5 proxy on a device in LAN2
+(e.g., at `10.0.2.10:1055`) and want a specific IoT device (e.g., `10.0.3.50`) to
+access the Tailscale network through that proxy — without opening LAN3 → LAN2 directly.
+
+**Yes, this is fully supported.** Here is exactly what to do.
+
+```
+IoT device (10.0.3.50)
+  │  default gateway → OPNsense LAN3 interface
+  ▼
+OPNsense (LAN3 firewall rule: src 10.0.3.50 → gateway PROXYGW_TAILSCALE)
+  │
+  ▼
+pgw_tailscale (TUN interface) ──▶ tun2socks ──▶ 10.0.2.10:1055 (Tailscale proxy)
+  │                                                     │
+  │                         (OPNsense reaches this via LAN2 interface — opt1)
+  ▼
+Tailscale network (exit node)
+```
+
+The IoT device never gets a direct route to LAN2. Its traffic enters the proxy tunnel
+inside OPNsense and exits through Tailscale. The existing block rule stays in place.
+
+#### Step 1: Find the OPNsense internal interface name for LAN2
+
+1. Go to **Interfaces → Assignments**
+2. Find the row for your LAN2 interface
+3. Note the short name in the **Interface** column — it is typically `opt1`, `opt2`,
+   `lan`, etc. depending on how your interfaces were named.
+
+You will use this name (e.g., `opt1`) in the plugin to tell it which interface to use
+when reaching the proxy server.
+
+#### Step 2: Add a proxy connection in the plugin
+
+1. Go to **Services → Proxy Gateway → Connections**
+2. Make sure **Enable Proxy Gateway** is checked at the top; click **Apply** if you
+   just enabled it
+3. Click **+** (Add) to open the connection editor and fill in:
+
+   | Field | Value |
+   |-------|-------|
+   | **Enabled** | ✓ |
+   | **Name** | `tailscale` (no spaces; max 16 chars) |
+   | **Description** | `Tailscale via LAN2` |
+   | **Proxy Server Interface** | Internal name of your LAN2 interface (e.g., `opt1`) |
+   | **Proxy Type** | SOCKS5 |
+   | **Proxy Server** | `10.0.2.10` (IP of your Tailscale SOCKS5 proxy on LAN2) |
+   | **Proxy Port** | `1055` (or whichever port Tailscale's SOCKS5 listener uses) |
+   | **DNS Mode** | `tunnel` — routes DNS queries through the Tailscale network |
+   | **Kill Switch** | ✓ recommended — drops LAN3 device traffic if tunnel goes down |
+
+4. Click **Save**, then click **Apply**
+
+5. Go to **Services → Proxy Gateway → Diagnostics** and wait for the `tailscale`
+   connection to show **Online**. If it shows Offline, check that:
+   - `10.0.2.10` is reachable from OPNsense: run `ping 10.0.2.10` from the OPNsense
+     shell (SSH or console)
+   - The Tailscale SOCKS5 proxy is listening on port 1055 on that device
+
+6. Confirm the gateway appeared: go to **System → Gateways → Single** and look for
+   `PROXYGW_TAILSCALE`. If it is missing, click Apply again.
+
+#### Step 3: Add the firewall rule on LAN3
+
+This is the rule that tells OPNsense to send traffic from your IoT device through the
+proxy gateway instead of the normal route.
+
+**Rule ordering matters.** OPNsense processes LAN3 rules top-to-bottom and stops at
+the first match. The proxy rule must be **above** any existing block rule that prevents
+LAN3 → LAN2 traffic. Otherwise the block rule matches first and the device never
+reaches the proxy.
+
+1. Go to **Firewall → Rules → [your LAN3 interface tab]**
+
+2. Look at the existing rule list. If there is a block rule for LAN3 → LAN2, note
+   its position. You will place the new rule above it.
+
+3. Click **+** (Add) at the top of the rule list (or use the arrow icon to insert
+   above a specific rule)
+
+4. Fill in the **top section** of the rule form:
+
+   | Field | Value |
+   |-------|-------|
+   | **Action** | Pass |
+   | **Interface** | *(your LAN3 interface — auto-filled)* |
+   | **Direction** | in |
+   | **TCP/IP Version** | IPv4 |
+   | **Protocol** | any |
+   | **Source** | Single host or Network → type `10.0.3.50` |
+   | **Destination** | any / any |
+   | **Description** | `IoT device 10.0.3.50 via Tailscale proxy` |
+
+5. **Click "Display Advanced"** (the triangle/arrow button near the top-right of the
+   form). This reveals extra fields including the Gateway selector.
+
+6. In the **Gateway** dropdown that now appears, select **`PROXYGW_TAILSCALE`**
+
+7. Click **Save**
+
+8. Back on the rule list, **drag the new rule above any LAN3 → LAN2 block rule**
+   using the handle on the left side of the row. The list should look like:
+
+   ```
+   ↑  [Pass]  src: 10.0.3.50  dst: any  gw: PROXYGW_TAILSCALE   ← NEW (must be first)
+      [Block] src: LAN3 net   dst: LAN2 net                      ← existing block rule
+   ```
+
+9. Click **Apply Changes**
+
+#### Step 4: Verify
+
+- From the IoT device (`10.0.3.50`), run:
+  ```
+  curl https://ifconfig.me
+  ```
+  The IP shown should be your Tailscale exit node's IP, not your WAN IP.
+
+- Go to **Firewall → Log Files → Live View**, filter by the LAN3 interface, and
+  trigger traffic from the IoT device. You should see the pass rule match (not the
+  block rule).
+
+- Go to **Services → Proxy Gateway → Diagnostics** and confirm the `tailscale`
+  connection remains **Online**.
+
+- Confirm that other LAN3 devices (not `10.0.3.50`) still cannot reach LAN2 directly.
+
+**Important**: OPNsense must be the default gateway for the IoT device (`10.0.3.50`)
+for this to work. If the device uses a different router as its gateway, OPNsense never
+sees its traffic and the firewall rule has no effect. Check the device's network
+settings and ensure its default gateway is the OPNsense LAN3 interface IP.
 
 ---
 
@@ -386,7 +548,10 @@ Each connection creates:
 - A point-to-point tunnel: local IP ↔ peer IP (from `172.31.0.0/16`)
 - A gateway: `PROXYGW_<NAME>` (auto-registered by OPNsense)
 - An outbound NAT rule on the tunnel interface
-- A WAN rule allowing OPNsense to reach the upstream proxy (prevents routing loops)
+- A firewall pass rule on the **Proxy Server Interface** (default: `wan`) allowing
+  OPNsense to reach the upstream proxy — prevents routing loops. Set
+  **Proxy Server Interface** to your LAN interface name when the proxy is on a
+  local network (e.g., a Tailscale proxy on LAN2).
 
 ### Supported Proxy Types
 
