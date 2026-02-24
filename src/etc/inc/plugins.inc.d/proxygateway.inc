@@ -74,8 +74,8 @@ function proxygateway_devices()
             $name = (string)$conn->name;
             $ifname = "pgw_{$name}";
             $names[$ifname] = [
-                'descr'   => sprintf('%s (Proxy Gateway - %s)', $ifname, (string)$conn->description ?: $name),
-                'ifdescr' => (string)$conn->description ?: $name,
+                'descr'   => sprintf('%s (Proxy Gateway - %s)', $ifname, htmlspecialchars((string)$conn->description ?: $name)),
+                'ifdescr' => htmlspecialchars((string)$conn->description ?: $name),
                 'name'    => $ifname,
             ];
         }
@@ -105,13 +105,13 @@ function proxygateway_prepare($device)
         }
 
         if (!does_interface_exist($device)) {
-            // On FreeBSD, create a tun device via the tun cloner, then rename it.
-            // "ifconfig <custom_name> create" does NOT work for tun devices.
-            $tundev = trim(shell_exec('/sbin/ifconfig tun create 2>&1'));
+            $output = [];
+            $rc = 0;
+            exec('/sbin/ifconfig tun create 2>&1', $output, $rc);
+            $tundev = ($rc === 0 && !empty($output[0])) ? trim($output[0]) : '';
             if (!empty($tundev) && strpos($tundev, 'tun') === 0) {
                 mwexecf('/sbin/ifconfig %s name %s', [$tundev, $device]);
                 mwexecf('/sbin/ifconfig %s group proxygateway', $device);
-                // Save the original tun device name so tun2socks can open /dev/tunN
                 @mkdir('/var/run/proxygateway', 0750, true);
                 @file_put_contents(
                     '/var/run/proxygateway/' . (string)$conn->name . '.tundev',
@@ -153,9 +153,6 @@ function proxygateway_tun_address($name, $tunAddress = '')
  * proxygateway_devices() instead, which makes them available in
  * Interfaces > Assignments for the user to assign manually.
  *
- * This matches the WireGuard pattern: wireguard_interfaces() only
- * returns the group, individual wg* devices are in wireguard_devices().
- *
  * After the user assigns a pgw_* interface, proxygateway_sync_interfaces()
  * auto-configures the IP address so the gateway becomes functional.
  */
@@ -167,7 +164,6 @@ function proxygateway_interfaces()
         return $interfaces;
     }
 
-    // Group interface for all proxy gateways
     $interfaces['proxygateway'] = [
         'descr'   => gettext('Proxy Gateway (Group)'),
         'if'      => 'proxygateway',
@@ -205,10 +201,7 @@ function proxygateway_firewall(\OPNsense\Firewall\Plugin $fw)
         $proxyServer = (string)$conn->proxyServer;
         $proxyPort = (string)$conn->proxyPort;
 
-        // Rule 1: Anti-routing-loop — ensure tun2socks traffic to the proxy
-        // server exits through the correct physical interface, not the TUN.
-        // Without this, policy routing rules could capture tun2socks's own
-        // connection to the proxy, creating a routing loop.
+        // Rule 1: Anti-routing-loop
         $fw->registerFilterRule(
             1,
             [
@@ -225,10 +218,7 @@ function proxygateway_firewall(\OPNsense\Firewall\Plugin $fw)
             ]
         );
 
-        // Rule 2: Allow traffic on the pgw_* TUN interface.
-        // If the user has assigned the interface (via Interfaces > Assignments),
-        // use the assigned OPNsense identifier. Otherwise, skip per-interface
-        // rules — the group pass rule below covers unassigned interfaces.
+        // Rule 2: Allow traffic on the pgw_* TUN interface (if assigned)
         $intf_id = null;
         foreach (legacy_config_get_interfaces() as $id => $cfg) {
             if (isset($cfg['if']) && $cfg['if'] === $ifname) {
@@ -251,8 +241,7 @@ function proxygateway_firewall(\OPNsense\Firewall\Plugin $fw)
         }
     }
 
-    // Group pass rule: allow traffic on the proxygateway group interface.
-    // Covers any pgw_* interface that is NOT assigned in Interfaces > Assignments.
+    // Group pass rule
     $fw->registerFilterRule(
         2,
         [
@@ -268,10 +257,10 @@ function proxygateway_firewall(\OPNsense\Firewall\Plugin $fw)
 /**
  * Register events to hook into during system operations.
  *
- * 'bootup' ensures interface IPs are synced in config after reboot, so
- * gateways are not "defunct" when services start.
+ * 'bootup' syncs interface IPs and optionally starts all enabled connections
+ * if the "Start connections on boot" setting is enabled.
  *
- * 'newwanip' and 'vpn' are intentionally NOT handled here — proxy tunnels
+ * 'newwanip' and 'vpn' are intentionally NOT handled — proxy tunnels
  * connect via a fixed proxy IP/hostname and use static TUN IPs, so WAN/VPN
  * changes don't require reconfiguration. Handling 'newwanip' would also
  * create a feedback loop: reconfigure -> route change -> WAN DHCP renewal
@@ -280,29 +269,105 @@ function proxygateway_firewall(\OPNsense\Firewall\Plugin $fw)
 function proxygateway_configure()
 {
     return [
-        'bootup' => ['proxygateway_sync_only:2'],
+        'bootup' => ['proxygateway_boot:2'],
     ];
 }
 
 /**
- * Lightweight sync handler for bootup events.
- * Only syncs interface IPs — does not trigger a full reconfigure.
+ * Boot handler: sync interface IPs, then optionally start all enabled connections.
+ *
+ * During bootup, /var/run/ has been wiped (tmpfs), so desired.json does not exist.
+ * This handler regenerates it from the model and triggers a full reconfigure
+ * if the "Start connections on boot" setting is enabled.
  */
-function proxygateway_sync_only($verbose = false)
+function proxygateway_boot($verbose = false)
 {
     if (!proxygateway_enabled()) {
         return;
     }
 
+    $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
+
+    // Always sync interface IPs so gateways are not defunct in config
     service_log('Syncing Proxy Gateway interface IPs...', $verbose);
     proxygateway_sync_interfaces();
     service_log("done.\n", $verbose);
+
+    // Check if auto-start on boot is enabled
+    if ((string)$mdl->general->startOnBoot !== '1') {
+        service_log("Proxy Gateway: boot auto-start disabled, skipping.\n", $verbose);
+        return;
+    }
+
+    service_log('Starting Proxy Gateway connections...', $verbose);
+
+    // Generate desired.json from model so reconfigure.py has something to work with
+    proxygateway_generate_desired($mdl);
+
+    // Trigger the full reconfigure via configd
+    configd_run('proxygateway reconfigure');
+
+    // Re-sync interface IPs and gateways after TUN devices are created
+    proxygateway_sync_interfaces();
+
+    // Reconfigure routes to pick up the new gateways
+    configd_run('interface routes reconfigure');
+
+    service_log("done.\n", $verbose);
+}
+
+/**
+ * Generate /var/run/proxygateway/desired.json from the MVC model.
+ *
+ * This is the same JSON format that ServiceController::reconfigureAction()
+ * produces, shared here so the bootup handler can also generate it.
+ *
+ * @param \OPNsense\ProxyGateway\ProxyGateway|null $mdl Optional model instance
+ */
+function proxygateway_generate_desired($mdl = null)
+{
+    if ($mdl === null) {
+        $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
+    }
+
+    $connections = [];
+    foreach ($mdl->connections->connection->iterateItems() as $uuid => $conn) {
+        $connections[] = [
+            'uuid'              => $uuid,
+            'name'              => (string)$conn->name,
+            'enabled'           => (string)$conn->enabled,
+            'proxyType'         => (string)$conn->proxyType,
+            'proxyServer'       => (string)$conn->proxyServer,
+            'proxyPort'         => (string)$conn->proxyPort,
+            'proxyInterface'    => (string)$conn->proxyInterface ?: 'wan',
+            'authEnabled'       => (string)$conn->authEnabled,
+            'authUser'          => (string)$conn->authUser,
+            'authPass'          => (string)$conn->authPass,
+            'tunAddress'        => (string)$conn->tunAddress,
+            'tunMTU'            => (string)$conn->tunMTU,
+            'healthCheckEnabled' => (string)$conn->healthCheckEnabled,
+            'healthCheckTarget' => (string)$conn->healthCheckTarget,
+            'gatewayPriority'   => (string)$conn->gatewayPriority,
+            'logLevel'          => (string)$mdl->general->logLevel,
+        ];
+    }
+
+    $configJson = json_encode(
+        ['connections' => $connections],
+        JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
+    );
+
+    @mkdir('/var/run/proxygateway', 0750, true);
+    $desiredFile = '/var/run/proxygateway/desired.json';
+    file_put_contents($desiredFile, $configJson);
+    chmod($desiredFile, 0600);
+    chown($desiredFile, 'root');
 }
 
 /**
  * Sync IP configuration for assigned proxy gateway interfaces.
  *
- * When a user assigns a pgw_* interface in Interfaces → Assignments,
+ * When a user assigns a pgw_* interface in Interfaces > Assignments,
  * OPNsense creates a config entry but without IP configuration.
  * This function auto-populates the correct tunnel IP address so the
  * associated gateway is functional (not "defunct").
@@ -330,10 +395,8 @@ function proxygateway_sync_interfaces()
         $ifname = "pgw_{$name}";
         $tunAddr = proxygateway_tun_address($name, (string)$conn->tunAddress);
 
-        // Find this interface in OPNsense's assigned interfaces
         foreach ($xml->interfaces->children() as $ifkey => $iface) {
             if ((string)$iface->{'if'} === $ifname) {
-                // Auto-configure IP if missing or changed
                 if (empty((string)$iface->ipaddr) || (string)$iface->ipaddr !== $tunAddr) {
                     if (isset($iface->ipaddr)) {
                         $iface->ipaddr = $tunAddr;
@@ -371,28 +434,16 @@ function proxygateway_sync_interfaces()
  *
  * Creates/updates <gateway_item> entries named PROXYGW_{NAME} under the
  * MVC <Gateways> section (capital G, with uuid attributes) with fargw=1
- * (point-to-point /32 subnet compatibility) and monitor_disable=1 (SOCKS5
- * doesn't support ICMP; the plugin uses its own HTTP health check).
+ * and monitor_disable=1.
  *
- * Also removes orphaned PROXYGW_* entries for disabled/deleted connections
- * and writes /tmp/pgw_{name}_router as a fallback for auto-detection.
- *
- * @param \OPNsense\ProxyGateway\ProxyGateway $mdl     Plugin model
- * @param \SimpleXMLElement                    $xml     Config XML root
- * @param bool                                 &$changed Set to true if config was modified
+ * Also removes orphaned PROXYGW_* entries and writes /tmp/pgw_{name}_router.
  */
 function proxygateway_sync_gateways($mdl, $xml, &$changed)
 {
-    if (!isset($xml->interfaces)) {
+    if (!isset($xml->interfaces) || !isset($xml->Gateways)) {
         return;
     }
 
-    // OPNsense stores gateways under <Gateways> (MVC model, capital G)
-    if (!isset($xml->Gateways)) {
-        return;
-    }
-
-    // Build map of expected gateway names for enabled connections with assigned interfaces
     $expectedGateways = [];
 
     foreach ($mdl->connections->connection->iterateItems() as $uuid => $conn) {
@@ -405,7 +456,6 @@ function proxygateway_sync_gateways($mdl, $xml, &$changed)
         $tunAddr = proxygateway_tun_address($name, (string)$conn->tunAddress);
         $gwName = 'PROXYGW_' . strtoupper($name);
 
-        // Calculate peer IP (gateway) = local IP + 1 on last octet
         $parts = explode('.', $tunAddr);
         $parts[3] = (int)$parts[3] + 1;
         $peerIp = implode('.', $parts);
@@ -415,7 +465,6 @@ function proxygateway_sync_gateways($mdl, $xml, &$changed)
             $priority = '255';
         }
 
-        // Find the assigned OPNsense interface key (e.g. opt4)
         $assignedKey = null;
         foreach ($xml->interfaces->children() as $ifkey => $iface) {
             if ((string)$iface->{'if'} === $ifname) {
@@ -454,17 +503,14 @@ function proxygateway_sync_gateways($mdl, $xml, &$changed)
             'data_length'               => '',
         ];
 
-        // Write _router file as fallback for auto-detection
         $routerFile = "/tmp/{$ifname}_router";
         @file_put_contents($routerFile, $peerIp);
         @chmod($routerFile, 0644);
     }
 
-    // Fields to check for updates on existing entries
     $updateFields = ['disabled', 'interface', 'gateway', 'priority', 'ipprotocol',
                      'fargw', 'monitor_disable', 'descr'];
 
-    // Update or create gateway_item entries
     foreach ($expectedGateways as $gwName => $gwData) {
         $found = false;
         foreach ($xml->Gateways->children() as $gw) {
@@ -489,14 +535,13 @@ function proxygateway_sync_gateways($mdl, $xml, &$changed)
 
         if (!$found) {
             $gw = $xml->Gateways->addChild('gateway_item');
-            // Generate a UUID v4 for the new entry
             $newUuid = sprintf(
                 '%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
-                mt_rand(0, 0xffff), mt_rand(0, 0xffff),
-                mt_rand(0, 0xffff),
-                mt_rand(0, 0x0fff) | 0x4000,
-                mt_rand(0, 0x3fff) | 0x8000,
-                mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
+                random_int(0, 0xffff), random_int(0, 0xffff),
+                random_int(0, 0xffff),
+                random_int(0, 0x0fff) | 0x4000,
+                random_int(0, 0x3fff) | 0x8000,
+                random_int(0, 0xffff), random_int(0, 0xffff), random_int(0, 0xffff)
             );
             $gw->addAttribute('uuid', $newUuid);
             foreach ($gwData as $field => $value) {
@@ -522,21 +567,6 @@ function proxygateway_sync_gateways($mdl, $xml, &$changed)
         $dom->parentNode->removeChild($dom);
         $changed = true;
     }
-}
-
-/**
- * Configuration handler called on system events.
- */
-function proxygateway_configure_do($verbose = false)
-{
-    if (!proxygateway_enabled()) {
-        return;
-    }
-
-    service_log('Configuring Proxy Gateway...', $verbose);
-    proxygateway_sync_interfaces();
-    configd_run('proxygateway reconfigure');
-    service_log("done.\n", $verbose);
 }
 
 /**

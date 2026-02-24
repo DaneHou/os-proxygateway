@@ -14,7 +14,8 @@ RECONFIGURE_LOG="${LOGDIR}/reconfigure.log"
 
 log_init "reconfig" "-" "info"
 
-mkdir -p "$RUNDIR" "$LOGDIR"
+mkdir -p -m 0750 "$RUNDIR"
+mkdir -p "$LOGDIR"
 
 # Read desired state from the model via configd template or direct XML parse
 # The PHP controller writes a JSON config to a known location before calling reconfigure
@@ -27,10 +28,15 @@ if [ ! -f "$DESIRED_CONFIG" ]; then
 fi
 
 # Run reconfigure.py and capture output to both stdout and a persistent log file.
-# stdout goes back to configd (type:script_output) → API → Apply dialog.
+# stdout goes back to configd (type:script_output) -> API -> Apply dialog.
 # Log file persists for the diagnostics page to display.
 echo "=== Reconfigure started at $(date) ===" > "$RECONFIGURE_LOG"
-/usr/local/bin/python3 "${SCRIPT_DIR}/reconfigure.py" "$DESIRED_CONFIG" 2>&1 | tee -a "$RECONFIGURE_LOG"
-EXIT_CODE=${PIPESTATUS[0]:-$?}
-echo "=== Reconfigure finished at $(date) (exit code: $EXIT_CODE) ===" >> "$RECONFIGURE_LOG"
-exit $EXIT_CODE
+
+# Use a temp file to capture exit code since PIPESTATUS is bash-only
+EXIT_FILE=$(mktemp /tmp/pgw_rc.XXXXXX)
+( /usr/local/bin/python3 "${SCRIPT_DIR}/reconfigure.py" "$DESIRED_CONFIG" 2>&1; echo $? > "$EXIT_FILE" ) | tee -a "$RECONFIGURE_LOG"
+EXIT_CODE=$(cat "$EXIT_FILE")
+rm -f "$EXIT_FILE"
+
+echo "=== Reconfigure finished at $(date) (exit code: ${EXIT_CODE}) ===" >> "$RECONFIGURE_LOG"
+exit "${EXIT_CODE:-1}"

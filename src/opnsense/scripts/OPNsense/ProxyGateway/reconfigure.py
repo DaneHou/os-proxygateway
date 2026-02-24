@@ -102,12 +102,6 @@ def run_setup(conn):
     if conn.get("tunMTU"):
         cmd.extend(["--tun-mtu", conn["tunMTU"]])
 
-    if conn.get("dnsMode"):
-        cmd.extend(["--dns-mode", conn["dnsMode"]])
-
-    if conn.get("dnsServer"):
-        cmd.extend(["--dns-server", conn["dnsServer"]])
-
     if conn.get("proxyInterface"):
         cmd.extend(["--proxy-iface", conn["proxyInterface"]])
 
@@ -259,7 +253,8 @@ def main():
     # Execute: start new/changed connections, then verify connectivity
     for name in sorted(to_start | to_restart):
         if run_setup(desired[name]) == 0:
-            run_healthcheck(desired[name])
+            if desired[name].get("healthCheckEnabled", "1") == "1":
+                run_healthcheck(desired[name])
 
     # Summary
     unchanged = to_check - to_restart

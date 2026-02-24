@@ -1,6 +1,6 @@
 <model>
     <mount>//OPNsense/ProxyGateway</mount>
-    <version>0.1.0</version>
+    <version>0.2.0</version>
     <description>Multi-Proxy Gateway Configuration</description>
 
     <items>
@@ -10,6 +10,10 @@
                 <default>0</default>
                 <Required>Y</Required>
             </enabled>
+            <startOnBoot type="BooleanField">
+                <default>1</default>
+                <Required>Y</Required>
+            </startOnBoot>
             <logLevel type="OptionField">
                 <default>warn</default>
                 <OptionValues>
@@ -37,6 +41,8 @@
 
                 <description type="TextField">
                     <Required>N</Required>
+                    <Mask>/^[a-zA-Z0-9 _\-\.]{0,64}$/</Mask>
+                    <ValidationMessage>Description: max 64 chars, alphanumeric with spaces, hyphens, underscores, dots</ValidationMessage>
                 </description>
 
                 <!-- Upstream proxy settings -->
@@ -102,36 +108,16 @@
                     <MaximumValue>9000</MaximumValue>
                 </tunMTU>
 
-                <!-- DNS settings -->
-                <dnsMode type="OptionField">
-                    <default>tunnel</default>
-                    <OptionValues>
-                        <tunnel>Route through tunnel</tunnel>
-                        <custom>Custom DNS server</custom>
-                    </OptionValues>
-                </dnsMode>
-
-                <dnsServer type="TextField">
-                    <Required>N</Required>
-                    <Mask>/^([0-9]{1,3}\.){3}[0-9]{1,3}$/</Mask>
-                    <ValidationMessage>Enter a valid IPv4 address for DNS</ValidationMessage>
-                </dnsServer>
-
                 <!-- Health check -->
                 <healthCheckEnabled type="BooleanField">
                     <default>1</default>
                 </healthCheckEnabled>
 
-                <healthCheckInterval type="IntegerField">
-                    <default>30</default>
-                    <MinimumValue>5</MinimumValue>
-                    <MaximumValue>3600</MaximumValue>
-                </healthCheckInterval>
-
                 <healthCheckTarget type="TextField">
                     <default></default>
                     <Required>N</Required>
-                    <ValidationMessage>Optional HTTP URL for health check (leave empty for default TCP probe to anycast DNS IPs)</ValidationMessage>
+                    <Mask>/^(https?:\/\/[^\s]{1,256})?$/</Mask>
+                    <ValidationMessage>Enter a valid HTTP or HTTPS URL for health checks</ValidationMessage>
                 </healthCheckTarget>
 
                 <!-- Gateway settings -->
@@ -140,10 +126,6 @@
                     <MinimumValue>1</MinimumValue>
                     <MaximumValue>255</MaximumValue>
                 </gatewayPriority>
-
-                <killSwitch type="BooleanField">
-                    <default>0</default>
-                </killSwitch>
             </connection>
         </connections>
     </items>

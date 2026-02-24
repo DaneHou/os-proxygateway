@@ -37,7 +37,6 @@ class ServiceController extends ApiMutableServiceControllerBase
 {
     protected static $internalServiceClass = '\OPNsense\ProxyGateway\ProxyGateway';
     protected static $internalServiceEnabled = 'general.enabled';
-    protected static $internalServiceTemplate = 'OPNsense/ProxyGateway';
     protected static $internalServiceName = 'proxygateway';
 
     /**
@@ -57,10 +56,6 @@ class ServiceController extends ApiMutableServiceControllerBase
 
     /**
      * Sync interface IPs and gateway entries into config.xml for assigned pgw_* interfaces.
-     *
-     * Uses OPNsense's MVC Config API (not legacy write_config) to avoid
-     * include dependency issues. Without this, get_interface_ip() returns
-     * null and gateways show as "defunct".
      */
     private function syncInterfaceIps($mdl)
     {
@@ -83,9 +78,7 @@ class ServiceController extends ApiMutableServiceControllerBase
 
             foreach ($xml->interfaces->children() as $ifkey => $iface) {
                 if ((string)$iface->{'if'} === $ifname) {
-                    // Set IP address if missing or changed
                     if (empty((string)$iface->ipaddr) || (string)$iface->ipaddr !== $tunAddr) {
-                        // Use addChild/replace pattern for SimpleXML
                         if (isset($iface->ipaddr)) {
                             $iface->ipaddr = $tunAddr;
                         } else {
@@ -119,27 +112,13 @@ class ServiceController extends ApiMutableServiceControllerBase
 
     /**
      * Sync gateway entries in config.xml for proxy gateway connections.
-     *
-     * Creates/updates <gateway_item> entries named PROXYGW_{NAME} under the
-     * MVC <Gateways> section (capital G, with uuid attributes) with fargw=1
-     * (point-to-point /32 subnet compatibility) and monitor_disable=1 (SOCKS5
-     * doesn't support ICMP; the plugin uses its own HTTP health check).
-     *
-     * Also removes orphaned PROXYGW_* entries for disabled/deleted connections
-     * and writes /tmp/pgw_{name}_router as a fallback for auto-detection.
      */
     private function syncGateways($mdl, $xml, &$changed)
     {
-        if (!isset($xml->interfaces)) {
+        if (!isset($xml->interfaces) || !isset($xml->Gateways)) {
             return;
         }
 
-        // OPNsense stores gateways under <Gateways> (MVC model, capital G)
-        if (!isset($xml->Gateways)) {
-            return;
-        }
-
-        // Build map of expected gateway names for enabled connections with assigned interfaces
         $expectedGateways = [];
 
         foreach ($mdl->connections->connection->iterateItems() as $uuid => $conn) {
@@ -152,7 +131,6 @@ class ServiceController extends ApiMutableServiceControllerBase
             $tunAddr = $this->tunAddress($name, (string)$conn->tunAddress);
             $gwName = 'PROXYGW_' . strtoupper($name);
 
-            // Calculate peer IP (gateway) = local IP + 1 on last octet
             $parts = explode('.', $tunAddr);
             $parts[3] = (int)$parts[3] + 1;
             $peerIp = implode('.', $parts);
@@ -162,7 +140,6 @@ class ServiceController extends ApiMutableServiceControllerBase
                 $priority = '255';
             }
 
-            // Find the assigned OPNsense interface key (e.g. opt4)
             $assignedKey = null;
             foreach ($xml->interfaces->children() as $ifkey => $iface) {
                 if ((string)$iface->{'if'} === $ifname) {
@@ -201,17 +178,14 @@ class ServiceController extends ApiMutableServiceControllerBase
                 'data_length'               => '',
             ];
 
-            // Write _router file as fallback for auto-detection
             $routerFile = "/tmp/{$ifname}_router";
             @file_put_contents($routerFile, $peerIp);
             @chmod($routerFile, 0644);
         }
 
-        // Fields to check for updates on existing entries
         $updateFields = ['disabled', 'interface', 'gateway', 'priority', 'ipprotocol',
                          'fargw', 'monitor_disable', 'descr'];
 
-        // Update or create gateway_item entries
         foreach ($expectedGateways as $gwName => $gwData) {
             $found = false;
             foreach ($xml->Gateways->children() as $gw) {
@@ -236,14 +210,13 @@ class ServiceController extends ApiMutableServiceControllerBase
 
             if (!$found) {
                 $gw = $xml->Gateways->addChild('gateway_item');
-                // Generate a UUID v4 for the new entry
                 $newUuid = sprintf(
                     '%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
-                    mt_rand(0, 0xffff), mt_rand(0, 0xffff),
-                    mt_rand(0, 0xffff),
-                    mt_rand(0, 0x0fff) | 0x4000,
-                    mt_rand(0, 0x3fff) | 0x8000,
-                    mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
+                    random_int(0, 0xffff), random_int(0, 0xffff),
+                    random_int(0, 0xffff),
+                    random_int(0, 0x0fff) | 0x4000,
+                    random_int(0, 0x3fff) | 0x8000,
+                    random_int(0, 0xffff), random_int(0, 0xffff), random_int(0, 0xffff)
                 );
                 $gw->addAttribute('uuid', $newUuid);
                 foreach ($gwData as $field => $value) {
@@ -303,13 +276,9 @@ class ServiceController extends ApiMutableServiceControllerBase
                     'authPass'          => (string)$conn->authPass,
                     'tunAddress'        => (string)$conn->tunAddress,
                     'tunMTU'            => (string)$conn->tunMTU,
-                    'dnsMode'           => (string)$conn->dnsMode,
-                    'dnsServer'         => (string)$conn->dnsServer,
                     'healthCheckEnabled' => (string)$conn->healthCheckEnabled,
-                    'healthCheckInterval' => (string)$conn->healthCheckInterval,
                     'healthCheckTarget' => (string)$conn->healthCheckTarget,
                     'gatewayPriority'   => (string)$conn->gatewayPriority,
-                    'killSwitch'        => (string)$conn->killSwitch,
                     'logLevel'          => (string)$mdl->general->logLevel,
                 ];
             }
@@ -322,7 +291,6 @@ class ServiceController extends ApiMutableServiceControllerBase
             @mkdir('/var/run/proxygateway', 0750, true);
             $desiredFile = '/var/run/proxygateway/desired.json';
             file_put_contents($desiredFile, $configJson);
-            // Secure file permissions: owner (root) read/write only
             chmod($desiredFile, 0600);
             chown($desiredFile, 'root');
 

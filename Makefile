@@ -93,8 +93,9 @@ install-plugin:
 	@cp src/usr/local/etc/rc.d/opnsense-proxygateway $(RCD_DIR)/
 	@chmod +x $(RCD_DIR)/opnsense-proxygateway
 
-	# Runtime directories
-	@mkdir -p /var/run/proxygateway /var/log/proxygateway
+	# Runtime directories (restrictive permissions for credential files)
+	@mkdir -p -m 0750 /var/run/proxygateway
+	@mkdir -p /var/log/proxygateway
 	@echo ">>> Plugin files installed."
 
 install-tun2socks:
