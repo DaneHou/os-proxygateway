@@ -2,6 +2,9 @@
 
 # teardown.sh — Stop tun2socks, destroy tun device, clean up
 # Called by configd: configctl proxygateway teardown <name>
+#
+# Options:
+#   --defer-routes    Skip route reconfiguration (for batch operations)
 
 set -e
 
@@ -13,11 +16,21 @@ LOGDIR="/var/log/proxygateway"
 . "${SCRIPT_DIR}/lib/logging.sh"
 
 NAME="$1"
+DEFER_ROUTES="no"
 
 if [ -z "$NAME" ]; then
-    echo "Usage: $0 <name>"
+    echo "Usage: $0 <name> [--defer-routes]"
     exit 1
 fi
+
+# Parse optional arguments
+shift
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --defer-routes) DEFER_ROUTES="yes"; shift 1 ;;
+        *)              echo "Unknown option: $1"; exit 1 ;;
+    esac
+done
 
 IFACE="pgw_${NAME}"
 PIDFILE="${RUNDIR}/${NAME}.pid"
@@ -36,10 +49,10 @@ if [ -f "$PIDFILE" ]; then
     if kill -0 "$PID" 2>/dev/null; then
         log_info "Stopping tun2socks (PID: $PID)..."
         kill "$PID"
-        # Wait for graceful shutdown (max 5 seconds)
+        # Wait for graceful shutdown (max 5 seconds, check every 0.25s)
         WAIT=0
-        while kill -0 "$PID" 2>/dev/null && [ $WAIT -lt 5 ]; do
-            sleep 1
+        while kill -0 "$PID" 2>/dev/null && [ $WAIT -lt 20 ]; do
+            sleep 0.25
             WAIT=$((WAIT + 1))
         done
         # Force kill if still running
@@ -58,13 +71,8 @@ else
 fi
 
 # Step 2: Remove router file (deregisters gateway)
-# Updated to use /var/run for consistency with setup.sh
 rm -f "/var/run/${IFACE}_router"
-rm -f "/var/run/${IFACE}_routerv6"
-# Also remove old /tmp files for backward compatibility
-rm -f "/tmp/${IFACE}_router"
-rm -f "/tmp/${IFACE}_routerv6"
-log_debug "Removed router files"
+log_debug "Removed router file"
 
 # Step 3: Destroy tun interface
 if ifconfig "$IFACE" >/dev/null 2>&1; then
@@ -80,8 +88,12 @@ rm -f "${RUNDIR}/${NAME}.tundev"
 rm -f "${RUNDIR}/${NAME}.status"
 log_debug "Removed config and tracking files"
 
-# Step 5: Trigger OPNsense route reconfiguration
-/usr/local/sbin/configctl interface routes reconfigure >/dev/null 2>&1 || true
-log_debug "Triggered route reconfiguration"
+# Step 5: Trigger OPNsense route reconfiguration (unless deferred for batch operations)
+if [ "$DEFER_ROUTES" = "no" ]; then
+    /usr/local/sbin/configctl interface routes reconfigure >/dev/null 2>&1 || true
+    log_debug "Triggered route reconfiguration"
+else
+    log_debug "Deferred route reconfiguration (batch mode)"
+fi
 
 log_separator "TEARDOWN COMPLETE"

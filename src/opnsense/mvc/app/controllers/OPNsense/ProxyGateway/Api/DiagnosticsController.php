@@ -141,12 +141,14 @@ class DiagnosticsController extends ApiControllerBase
             $logFile = "/var/log/proxygateway/*.log";
         }
 
-        // Use tail to get recent log lines; for multiple files, sort by timestamp
+        // Use tail to get recent log lines; for multiple files, tail each then sort
         if (!empty($name)) {
             $cmd = sprintf('tail -n %d %s 2>/dev/null', $lines, escapeshellarg($logFile));
         } else {
+            // More efficient: tail each file first, then sort only the recent entries
             $cmd = sprintf(
-                'cat /var/log/proxygateway/*.log 2>/dev/null | sort | tail -n %d',
+                'tail -q -n %d /var/log/proxygateway/*.log 2>/dev/null | sort | tail -n %d',
+                $lines,
                 $lines
             );
         }

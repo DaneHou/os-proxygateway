@@ -27,6 +27,7 @@ usage() {
     echo "  --dns-mode <mode>        DNS mode: tunnel|custom (default: tunnel)"
     echo "  --dns-server <ip>        Custom DNS server (requires --dns-mode custom)"
     echo "  --loglevel <level>       Log level: debug|info|warn|error (default: warn)"
+    echo "  --defer-routes           Skip route reconfiguration (for batch operations)"
     exit 1
 }
 
@@ -47,6 +48,7 @@ TUN_MTU="1500"
 DNS_MODE="tunnel"
 DNS_SERVER=""
 LOGLEVEL="warn"
+DEFER_ROUTES="no"
 
 # Parse optional arguments
 while [ $# -gt 0 ]; do
@@ -61,6 +63,7 @@ while [ $# -gt 0 ]; do
         --tun-mtu)    TUN_MTU="$2"; shift 2 ;;
         --dns-mode)   DNS_MODE="$2"; shift 2 ;;
         --dns-server) DNS_SERVER="$2"; shift 2 ;;
+        --defer-routes) DEFER_ROUTES="yes"; shift 1 ;;
         --loglevel)
             # tun2socks uses Go's zap logger: debug|info|warn|error|panic|fatal
             # Map user-friendly "warning" to "warn" for compatibility
@@ -198,7 +201,7 @@ echo "$T2S_PID" > "$PIDFILE"
 log_debug "tun2socks spawned with PID $T2S_PID"
 
 # Wait briefly and verify the process is still alive
-sleep 1
+sleep 0.1
 if ! kill -0 "$T2S_PID" 2>/dev/null; then
     log_error "tun2socks failed to start — check ${LOGFILE} for details"
     tail -20 "$LOGFILE" 2>/dev/null || true
@@ -239,9 +242,13 @@ log_debug "Saved connection config to ${CONFFILE} (secure permissions)"
 # Also secure the tundev file
 chmod 600 "$TUNDEVFILE" 2>/dev/null || true
 
-# Step 5: Trigger OPNsense route reconfiguration
-/usr/local/sbin/configctl interface routes reconfigure >/dev/null 2>&1 || true
-log_debug "Triggered route reconfiguration"
+# Step 5: Trigger OPNsense route reconfiguration (unless deferred for batch operations)
+if [ "$DEFER_ROUTES" = "no" ]; then
+    /usr/local/sbin/configctl interface routes reconfigure >/dev/null 2>&1 || true
+    log_debug "Triggered route reconfiguration"
+else
+    log_debug "Deferred route reconfiguration (batch mode)"
+fi
 
 log_info "Gateway peer: $TUN_PEER | PID: $T2S_PID"
 log_separator "SETUP COMPLETE"

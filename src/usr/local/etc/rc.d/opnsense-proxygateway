@@ -43,12 +43,19 @@ proxygateway_stop()
 {
     echo "Stopping ${name}."
 
-    # Teardown all running connections
+    # Teardown all running connections with deferred route reconfiguration
+    connections_stopped=0
     for conf in "${RUNDIR}"/*.conf; do
         [ -f "$conf" ] || continue
         conn_name=$(basename "$conf" .conf)
-        /bin/sh "${SCRIPT_DIR}/teardown.sh" "$conn_name"
+        /bin/sh "${SCRIPT_DIR}/teardown.sh" "$conn_name" --defer-routes
+        connections_stopped=$((connections_stopped + 1))
     done
+
+    # Trigger route reconfiguration once after all teardowns
+    if [ $connections_stopped -gt 0 ]; then
+        /usr/local/sbin/configctl interface routes reconfigure >/dev/null 2>&1 || true
+    fi
 
     rm -f "$pidfile"
 }
