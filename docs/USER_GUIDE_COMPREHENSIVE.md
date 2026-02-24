@@ -1,7 +1,7 @@
 # Comprehensive User Guide: OS Proxy Gateway
 
-**Version:** 1.0.0-rc1
-**Last Updated:** 2026-02-23
+**Version:** 1.0.0
+**Last Updated:** 2026-02-24
 **Target Audience:** OPNsense administrators
 
 ---
