@@ -87,7 +87,11 @@ class ServiceController extends ApiMutableServiceControllerBase
             );
 
             @mkdir('/var/run/proxygateway', 0750, true);
-            file_put_contents('/var/run/proxygateway/desired.json', $configJson);
+            $desiredFile = '/var/run/proxygateway/desired.json';
+            file_put_contents($desiredFile, $configJson);
+            // Secure file permissions: owner (root) read/write only
+            chmod($desiredFile, 0600);
+            chown($desiredFile, 'root');
 
             $backend = new \OPNsense\Core\Backend();
 
