@@ -1,6 +1,6 @@
 # Comprehensive User Guide: OS Proxy Gateway
 
-**Version:** 1.0.0
+**Version:** 1.0.2
 **Last Updated:** 2026-02-24
 **Target Audience:** OPNsense administrators
 
@@ -187,51 +187,36 @@ Before installing, ensure you have:
 - SSH access (for installation from source)
 - Web UI access
 
-### Installation Methods
-
-#### Method 1: From OPNsense Package Repository (Recommended)
-
-⚠️ **Note:** Not yet available in official repository. This will be the method after acceptance.
-
-```bash
-# Update package repository
-pkg update
-
-# Install plugin
-pkg install os-proxygateway
-
-# Verify installation
-pkg info os-proxygateway
-```
-
-#### Method 2: From Source (Current Method)
+### Installation
 
 ```bash
 # SSH to your OPNsense box as root
 ssh root@opnsense.local
 
 # Clone the repository
-cd /usr/local
-git clone https://github.com/DaneBA/os-proxygateway.git
+git clone https://github.com/DaneBA/os-proxygateway.git ~/os-proxygateway
+cd ~/os-proxygateway
 
-# Navigate to repository
-cd os-proxygateway
-
-# Install the plugin
+# Install the plugin (downloads tun2socks, installs files, restarts services)
 make install
+```
 
-# Restart web interface to load new menu items
-configctl webgui restart
+Hard-refresh your browser (Ctrl+Shift+R) after install. The plugin appears
+under **Services > Proxy Gateway**.
+
+### Updating
+
+```bash
+cd ~/os-proxygateway
+git pull
+make install-plugin && make activate
 ```
 
 ### Post-Installation Verification
 
 ```bash
 # Check if service is registered
-service opnsense-proxygateway status
-
-# Check if menu items appear
-# Navigate to: Services → Proxy Gateway (in web UI)
+pluginctl -s | grep proxygateway
 
 # Verify tun2socks binary
 /usr/local/bin/tun2socks --version
@@ -283,66 +268,50 @@ This guide will get you routing traffic through a proxy in 5 minutes.
 
 #### Step 1: Create Proxy Connection
 
-1. Navigate to **Services → Proxy Gateway → Connections**
+1. Navigate to **Services > Proxy Gateway > Connections**
+2. Click **+** to add a connection
+3. Fill in:
+   - **Name:** `myproxy`
+   - **Enabled:** checked
+   - **Type:** SOCKS5
+   - **Server:** `proxy.example.com`
+   - **Port:** `1080`
+   - (If auth needed: enable auth, fill username/password)
+4. Click **Save**, then **Apply Changes**
 
-2. Click **Add Connection** (+ button)
+#### Step 2: Assign the Interface
 
-3. Fill in the **General** tab:
-   ```
-   Name:        myproxy
-   Description: My first proxy connection
-   Enabled:     ✓ (checked)
-   ```
+1. Navigate to **Interfaces > Assignments**
+2. Find `pgw_myproxy` in the dropdown, click **+** to add it
+3. Click the new interface name (e.g. OPT5), check **Enable**, click **Save**
+4. Go back to **Services > Proxy Gateway** and click **Apply Changes** again
+   - This auto-configures the IP address and creates the gateway `PROXYGW_MYPROXY`
 
-4. Fill in the **Proxy Server** tab:
-   ```
-   Type:        SOCKS5
-   Server:      proxy.example.com
-   Port:        1080
+#### Step 3: Add Outbound NAT
 
-   (If authentication required:)
-   Auth Enabled: ✓
-   Username:     your_username
-   Password:     your_password
-   ```
+1. Navigate to **Firewall > NAT > Outbound**
+2. Switch to **Hybrid** mode if not already
+3. Add a rule:
+   - **Interface:** WAN
+   - **Source:** the pgw_myproxy subnet (e.g. `172.31.x.x/32`)
+   - **Translation:** Interface address
+4. Click **Save**, then **Apply Changes**
 
-5. Leave other tabs at defaults
+#### Step 4: Create Firewall Rule
 
-6. Click **Save**
+1. Navigate to **Firewall > Rules > LAN**
+2. Add a rule **above** the default allow rule:
+   - **Action:** Pass
+   - **Source:** `192.168.1.100` (your test device)
+   - **Destination:** any
+   - **Gateway:** `PROXYGW_MYPROXY`
+3. Click **Save**, then **Apply Changes**
 
-7. Click **Apply Changes** button (top right)
+#### Step 5: Test
 
-#### Step 2: Create Firewall Rule
-
-1. Navigate to **Firewall → Rules → LAN**
-
-2. Click **Add Rule** (+ button)
-
-3. Configure the rule:
-   ```
-   Action:         Pass
-   Interface:      LAN
-   Protocol:       any
-   Source:         192.168.1.100 (your test device IP)
-   Destination:    any
-   Gateway:        PROXYGW_MYPROXY
-   Description:    Route test device through proxy
-   ```
-
-4. Click **Save**
-
-5. Click **Apply Changes**
-
-#### Step 3: Test
-
-1. On device 192.168.1.100, visit: https://ifconfig.me
+1. On device 192.168.1.100, visit https://ifconfig.me
    - Should show the proxy server's IP address
-
-2. Check connection status:
-   - Navigate to **Services → Proxy Gateway → Diagnostics**
-   - Verify "myproxy" shows status: **UP**
-
-✅ **Success!** Traffic from your device now routes through the proxy.
+2. Check **Services > Proxy Gateway > Diagnostics** — status should be **UP**
 
 ---
 
@@ -1317,7 +1286,7 @@ This issue occurs when UDP relay (required for DNS and other UDP protocols) isn'
 
 **Solution:**
 
-**As of version 1.1.0**, the plugin automatically adds UDP timeout configuration for all SOCKS5 connections. If you're experiencing this issue:
+The plugin automatically adds UDP timeout configuration (300s) for all SOCKS5 connections. If you're experiencing this issue:
 
 1. **Verify Proxy Configuration:**
    ```
@@ -1451,4 +1420,34 @@ sudo journalctl -u tailscale -f
 
 ---
 
-(Continuing in next message due to length...)
+## API Reference
+
+### Connection Management
+
+```
+GET  /api/proxygateway/connection/searchItem
+GET  /api/proxygateway/connection/getItem/{uuid}
+POST /api/proxygateway/connection/addItem
+POST /api/proxygateway/connection/setItem/{uuid}
+POST /api/proxygateway/connection/delItem/{uuid}
+POST /api/proxygateway/connection/toggleItem/{uuid}
+```
+
+### Service Control
+
+```
+POST /api/proxygateway/service/reconfigure
+POST /api/proxygateway/service/start
+POST /api/proxygateway/service/stop
+POST /api/proxygateway/service/restart
+GET  /api/proxygateway/service/status
+```
+
+### Diagnostics
+
+```
+GET  /api/proxygateway/diagnostics/getStatus
+POST /api/proxygateway/diagnostics/testConnection
+GET  /api/proxygateway/diagnostics/getLogs
+POST /api/proxygateway/diagnostics/clearLogs
+```
