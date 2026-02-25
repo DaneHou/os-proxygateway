@@ -81,22 +81,27 @@ if ! ifconfig "$IFACE" >/dev/null 2>&1; then
 fi
 
 # --- Connectivity probe through the proxy server ---
-# Build a curl-compatible proxy URL. Use --proxy so traffic goes through the
-# actual SOCKS5/HTTP proxy, verifying the chain: proxy reachable → proxy forwards.
+# Use PROXY_URL from .conf (includes auth credentials if configured).
+# For SOCKS5, switch to socks5h:// so curl asks the proxy to resolve DNS.
 case "$PROXY_TYPE" in
-    socks5|socks5tls) CURL_PROXY="socks5h://${PROXY_ADDR}:${PROXY_PORT}" ;;
-    http|https)       CURL_PROXY="http://${PROXY_ADDR}:${PROXY_PORT}" ;;
-    *)                CURL_PROXY="socks5h://${PROXY_ADDR}:${PROXY_PORT}" ;;
+    socks5|socks5tls) CURL_PROXY="socks5h${PROXY_URL#socks5}" ;;
+    http|https)       CURL_PROXY="$PROXY_URL" ;;
+    *)                CURL_PROXY="socks5h${PROXY_URL#socks5}" ;;
 esac
 
-log_debug "Probing ${TARGET} via proxy ${CURL_PROXY}..."
+# Mask credentials in log output
+CURL_PROXY_LOG=$(echo "$CURL_PROXY" | sed 's|://[^@]*@|://***@|')
+
+log_debug "Probing ${TARGET} via proxy ${CURL_PROXY_LOG}..."
 START_MS=$(date +%s%N 2>/dev/null || echo "0")
 
+CURL_ERR_FILE="${RUNDIR}/${NAME}.curl_err"
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
     --proxy "$CURL_PROXY" \
     --connect-timeout "$TIMEOUT" \
     --max-time "$TIMEOUT" \
-    "$TARGET" 2>/dev/null)
+    "$TARGET" 2>"$CURL_ERR_FILE")
+CURL_EXIT=$?
 
 END_MS=$(date +%s%N 2>/dev/null || echo "0")
 
@@ -107,11 +112,12 @@ if [ "$START_MS" != "0" ] && [ "$END_MS" != "0" ]; then
     LATENCY_MS=$((LATENCY_NS / 1000000))
 fi
 
-PROBE_DETAIL="via=${CURL_PROXY} target=${TARGET} http=${HTTP_CODE}"
+PROBE_DETAIL="via=${CURL_PROXY_LOG} target=${TARGET} http=${HTTP_CODE}"
 
 # Any HTTP response (even 4xx/5xx) means the proxy forwarded the request.
 # Only 000 means the proxy itself is unreachable or not working.
 if [ "$HTTP_CODE" != "000" ] && [ -n "$HTTP_CODE" ]; then
+    rm -f "$CURL_ERR_FILE"
     log_info "Healthy — HTTP ${HTTP_CODE}, ${LATENCY_MS}ms (${PROBE_DETAIL})"
     cat > "$STATUSFILE" <<EOF
 status=up
@@ -121,11 +127,15 @@ timestamp=$(date +%s)
 EOF
     exit 0
 else
-    log_warning "Proxy unreachable — ${PROBE_DETAIL}"
+    CURL_ERR=$(head -1 "$CURL_ERR_FILE" 2>/dev/null)
+    rm -f "$CURL_ERR_FILE"
+    log_warning "Proxy unreachable — ${PROBE_DETAIL} curl_exit=${CURL_EXIT} ${CURL_ERR}"
     cat > "$STATUSFILE" <<EOF
 status=down
 probe=${PROBE_DETAIL}
 reason=proxy_unreachable
+curl_exit=${CURL_EXIT}
+curl_err=${CURL_ERR}
 timestamp=$(date +%s)
 EOF
     exit 1
