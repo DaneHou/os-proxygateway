@@ -125,21 +125,31 @@ def run_setup(conn):
     return result.returncode
 
 
+def save_healthcheck_config(conn):
+    """Append health check settings to the connection's .conf file.
+
+    This makes the custom target available to healthcheck.sh regardless of
+    whether it's called from reconfigure.py or the Test button (via configd).
+    """
+    name = conn["name"]
+    conf_file = os.path.join(RUNDIR, f"{name}.conf")
+    target = conn.get("healthCheckTarget", "")
+    if os.path.isfile(conf_file) and target:
+        with open(conf_file, "a") as f:
+            f.write(f'HEALTH_TARGET="{target}"\n')
+
+
 def run_healthcheck(conn):
     """Run a quick health check after starting a connection.
 
     Tests actual proxy connectivity by sending traffic through the proxy.
-    Only passes a custom target if the user explicitly configured one
-    (non-empty healthCheckTarget). Otherwise the healthcheck script uses
-    its built-in default (http://1.1.1.1/).
+    The target URL is read from the .conf file by healthcheck.sh (written
+    by save_healthcheck_config), so we don't pass it as an argument.
     """
     name = conn["name"]
     cmd = ["/bin/sh", HEALTHCHECK_SCRIPT, name]
-    target = conn.get("healthCheckTarget", "")
-    if target:
-        cmd.append(target)
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
         output = result.stdout.strip()
         if result.returncode == 0:
             print(f"  Health check: {output}")
@@ -147,7 +157,7 @@ def run_healthcheck(conn):
             print(f"  Health check: FAILED — {output}")
         return result.returncode
     except subprocess.TimeoutExpired:
-        print(f"  Health check: FAILED — timed out after 15s")
+        print(f"  Health check: FAILED — timed out after 20s")
         return 1
 
 
@@ -257,6 +267,9 @@ def main():
     for name in sorted(to_start | to_restart):
         if run_setup(desired[name]) == 0:
             started.append(name)
+            # Save health check config to .conf so healthcheck.sh (called by
+            # the Test button or cron) uses the same target/settings.
+            save_healthcheck_config(desired[name])
 
     # Give tun2socks time to complete the SOCKS handshake before probing.
     # setup.sh exits once the TUN interface is up, but the proxy connection
