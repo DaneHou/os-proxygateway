@@ -148,13 +148,9 @@ function proxygateway_tun_address($name, $tunAddress = '')
 /**
  * Register virtual interfaces for proxy gateway connections.
  *
- * Only registers the group interface here. Individual pgw_* interfaces
- * are NOT registered as virtual interfaces — they are registered via
- * proxygateway_devices() instead, which makes them available in
- * Interfaces > Assignments for the user to assign manually.
- *
- * After the user assigns a pgw_* interface, proxygateway_sync_interfaces()
- * auto-configures the IP address so the gateway becomes functional.
+ * Registers the proxygateway group interface. Individual pgw_* interfaces
+ * are auto-assigned in config.xml by proxygateway_sync_interfaces() and
+ * registered as devices by proxygateway_devices().
  */
 function proxygateway_interfaces()
 {
@@ -288,8 +284,8 @@ function proxygateway_boot($verbose = false)
 
     $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
 
-    // Always sync interface IPs so gateways are not defunct in config
-    service_log('Syncing Proxy Gateway interface IPs...', $verbose);
+    // Auto-assign interfaces and sync IPs/gateways in config.xml
+    service_log('Syncing Proxy Gateway interfaces...', $verbose);
     proxygateway_sync_interfaces();
     service_log("done.\n", $verbose);
 
@@ -307,10 +303,9 @@ function proxygateway_boot($verbose = false)
     // Trigger the full reconfigure via configd
     configd_run('proxygateway reconfigure');
 
-    // Re-sync interface IPs and gateways after TUN devices are created
+    // Re-sync after TUN devices are created, then re-register and apply routes
     proxygateway_sync_interfaces();
-
-    // Reconfigure routes to pick up the new gateways
+    configd_run('interface invoke registration');
     configd_run('interface routes reconfigure');
 
     service_log("done.\n", $verbose);
@@ -365,14 +360,34 @@ function proxygateway_generate_desired($mdl = null)
 }
 
 /**
- * Sync IP configuration for assigned proxy gateway interfaces.
+ * Find the next available optN key in config.xml interfaces.
  *
- * When a user assigns a pgw_* interface in Interfaces > Assignments,
- * OPNsense creates a config entry but without IP configuration.
- * This function auto-populates the correct tunnel IP address so the
- * associated gateway is functional (not "defunct").
+ * OPNsense uses wan, lan, opt1, opt2, ... for interface keys.
+ * Returns the next sequential optN (max existing + 1).
+ */
+function proxygateway_next_opt_key($xml)
+{
+    $maxOpt = 0;
+    foreach ($xml->interfaces->children() as $ifkey => $iface) {
+        if (preg_match('/^opt(\d+)$/', $ifkey, $m)) {
+            $maxOpt = max($maxOpt, (int)$m[1]);
+        }
+    }
+    return 'opt' . ($maxOpt + 1);
+}
+
+/**
+ * Auto-assign and sync proxy gateway interfaces in config.xml.
  *
- * Uses the MVC Config API to save, avoiding legacy include dependencies.
+ * For each enabled connection:
+ * 1. Auto-assigns the pgw_* interface if not already in config.xml
+ *    (finds next available optN key, sets IP/subnet/enable)
+ * 2. Syncs IP address and subnet for already-assigned interfaces
+ *
+ * Also removes orphaned pgw_* assignments for connections that have been
+ * deleted from the model (disabled connections keep their assignment).
+ *
+ * Finally, syncs gateway entries via proxygateway_sync_gateways().
  */
 function proxygateway_sync_interfaces()
 {
@@ -386,6 +401,14 @@ function proxygateway_sync_interfaces()
     $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
     $changed = false;
 
+    // Collect ALL pgw_* device names in the model (enabled or disabled)
+    // so we can distinguish "disabled" from "deleted" when cleaning up.
+    $allModelPgw = [];
+    foreach ($mdl->connections->connection->iterateItems() as $uuid => $conn) {
+        $allModelPgw["pgw_" . (string)$conn->name] = true;
+    }
+
+    // Auto-assign and sync IP config for enabled connections
     foreach ($mdl->connections->connection->iterateItems() as $uuid => $conn) {
         if (empty((string)$conn->enabled)) {
             continue;
@@ -394,9 +417,14 @@ function proxygateway_sync_interfaces()
         $name = (string)$conn->name;
         $ifname = "pgw_{$name}";
         $tunAddr = proxygateway_tun_address($name, (string)$conn->tunAddress);
+        $descr = !empty((string)$conn->description) ? (string)$conn->description : $name;
 
+        // Check if already assigned
+        $found = false;
         foreach ($xml->interfaces->children() as $ifkey => $iface) {
             if ((string)$iface->{'if'} === $ifname) {
+                $found = true;
+                // Update IP config if needed
                 if (empty((string)$iface->ipaddr) || (string)$iface->ipaddr !== $tunAddr) {
                     if (isset($iface->ipaddr)) {
                         $iface->ipaddr = $tunAddr;
@@ -420,6 +448,33 @@ function proxygateway_sync_interfaces()
                 break;
             }
         }
+
+        // Auto-assign if not yet in config.xml
+        if (!$found) {
+            $nextKey = proxygateway_next_opt_key($xml);
+            $newIface = $xml->interfaces->addChild($nextKey);
+            $newIface->addChild('if', $ifname);
+            $newIface->addChild('descr', $descr);
+            $newIface->addChild('ipaddr', $tunAddr);
+            $newIface->addChild('subnet', '32');
+            $newIface->addChild('enable', '1');
+            $changed = true;
+        }
+    }
+
+    // Remove pgw_* assignments for connections deleted from the model.
+    // Disabled connections keep their assignment (gateway sync handles the rest).
+    $toRemove = [];
+    foreach ($xml->interfaces->children() as $ifkey => $iface) {
+        $ifDev = (string)$iface->{'if'};
+        if (strpos($ifDev, 'pgw_') === 0 && !isset($allModelPgw[$ifDev])) {
+            $toRemove[] = $iface;
+        }
+    }
+    foreach ($toRemove as $iface) {
+        $dom = dom_import_simplexml($iface);
+        $dom->parentNode->removeChild($dom);
+        $changed = true;
     }
 
     proxygateway_sync_gateways($mdl, $xml, $changed);
