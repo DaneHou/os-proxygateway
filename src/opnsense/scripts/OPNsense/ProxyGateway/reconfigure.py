@@ -13,6 +13,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 
 RUNDIR = "/var/run/proxygateway"
 LOGDIR = "/var/log/proxygateway"
@@ -252,10 +253,20 @@ def main():
         run_teardown(name)
 
     # Execute: start new/changed connections, then verify connectivity
+    started = []
     for name in sorted(to_start | to_restart):
         if run_setup(desired[name]) == 0:
-            if desired[name].get("healthCheckEnabled", "1") == "1":
-                run_healthcheck(desired[name])
+            started.append(name)
+
+    # Give tun2socks time to complete the SOCKS handshake before probing.
+    # setup.sh exits once the TUN interface is up, but the proxy connection
+    # needs another moment to become usable.
+    if started:
+        time.sleep(2)
+
+    for name in started:
+        if desired[name].get("healthCheckEnabled", "1") == "1":
+            run_healthcheck(desired[name])
 
     # Summary
     unchanged = to_check - to_restart
