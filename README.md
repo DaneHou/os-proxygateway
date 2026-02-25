@@ -75,6 +75,7 @@ make uninstall
 
 ## Documentation
 
+- [Why Proxy Gateway?](docs/WHY_PROXY_GATEWAY.md) — what this plugin does, why it exists, and how it compares to alternatives
 - [User Guide](docs/USER_GUIDE_COMPREHENSIVE.md) — detailed setup with topology diagrams and firewall rule examples
 - [Changelog](CHANGELOG.md) — version history
 - [Security](SECURITY.md) — credential storage notes
