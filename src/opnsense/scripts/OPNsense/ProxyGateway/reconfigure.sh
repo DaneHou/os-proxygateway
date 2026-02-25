@@ -3,12 +3,14 @@
 # reconfigure.sh — Read config model, diff against running state, start/stop as needed
 # Called by configd: configctl proxygateway reconfigure
 # Output is captured by configd (type:script_output) and returned to the API.
+#
+# Concurrency: configd serializes commands of the same action type, so
+# concurrent reconfigure runs are already prevented at the configd level.
 
 SCRIPT_DIR=$(dirname "$0")
 RUNDIR="/var/run/proxygateway"
 LOGDIR="/var/log/proxygateway"
 RECONFIGURE_LOG="${LOGDIR}/reconfigure.log"
-LOCKFILE="${RUNDIR}/reconfigure.lock"
 
 # Source structured logging library
 . "${SCRIPT_DIR}/lib/logging.sh"
@@ -17,22 +19,6 @@ log_init "reconfig" "-" "info"
 
 mkdir -p -m 0750 "$RUNDIR"
 mkdir -p "$LOGDIR"
-
-# Acquire exclusive lock to prevent concurrent reconfigure runs.
-# Uses a PID-based lock file (POSIX-compatible — flock fd syntax
-# does not work on FreeBSD /bin/sh).
-if [ -f "$LOCKFILE" ]; then
-    OTHER_PID=$(cat "$LOCKFILE" 2>/dev/null)
-    if [ -n "$OTHER_PID" ] && kill -0 "$OTHER_PID" 2>/dev/null; then
-        log_warning "Another reconfigure is already running (PID: $OTHER_PID) — skipping"
-        echo "Another reconfigure is already running. Please wait and try again."
-        exit 0
-    fi
-    # Stale lock file from a crashed process — remove it
-    rm -f "$LOCKFILE"
-fi
-echo $$ > "$LOCKFILE"
-trap 'rm -f "$LOCKFILE"' EXIT
 
 # Read desired state from the model via configd template or direct XML parse
 # The PHP controller writes a JSON config to a known location before calling reconfigure
