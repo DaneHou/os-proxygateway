@@ -60,6 +60,7 @@ install-plugin:
 	# MVC models
 	@mkdir -p $(MVC_DIR)/models/OPNsense/ProxyGateway/ACL
 	@mkdir -p $(MVC_DIR)/models/OPNsense/ProxyGateway/Menu
+	@mkdir -p $(MVC_DIR)/models/OPNsense/ProxyGateway/Migrations
 	@cp src/opnsense/mvc/app/models/OPNsense/ProxyGateway/ProxyGateway.php \
 		$(MVC_DIR)/models/OPNsense/ProxyGateway/
 	@cp src/opnsense/mvc/app/models/OPNsense/ProxyGateway/ProxyGateway.xml \
@@ -68,6 +69,8 @@ install-plugin:
 		$(MVC_DIR)/models/OPNsense/ProxyGateway/ACL/
 	@cp src/opnsense/mvc/app/models/OPNsense/ProxyGateway/Menu/Menu.xml \
 		$(MVC_DIR)/models/OPNsense/ProxyGateway/Menu/
+	@cp src/opnsense/mvc/app/models/OPNsense/ProxyGateway/Migrations/*.php \
+		$(MVC_DIR)/models/OPNsense/ProxyGateway/Migrations/
 
 	# MVC views
 	@mkdir -p $(MVC_DIR)/views/OPNsense/ProxyGateway
