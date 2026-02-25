@@ -8,6 +8,7 @@ SCRIPT_DIR=$(dirname "$0")
 RUNDIR="/var/run/proxygateway"
 LOGDIR="/var/log/proxygateway"
 RECONFIGURE_LOG="${LOGDIR}/reconfigure.log"
+LOCKFILE="${RUNDIR}/reconfigure.lock"
 
 # Source structured logging library
 . "${SCRIPT_DIR}/lib/logging.sh"
@@ -16,6 +17,16 @@ log_init "reconfig" "-" "info"
 
 mkdir -p -m 0750 "$RUNDIR"
 mkdir -p "$LOGDIR"
+
+# Acquire exclusive lock to prevent concurrent reconfigure runs.
+# If another reconfigure is already running (e.g. user double-clicked Apply),
+# wait up to 30 seconds then give up.
+exec 9>"$LOCKFILE"
+if ! flock -w 30 9; then
+    log_error "Another reconfigure is already running (lock held for >30s)"
+    echo "ERROR: Another reconfigure is already running. Please wait and try again."
+    exit 1
+fi
 
 # Read desired state from the model via configd template or direct XML parse
 # The PHP controller writes a JSON config to a known location before calling reconfigure
@@ -30,6 +41,8 @@ fi
 # Run reconfigure.py and capture output to both stdout and a persistent log file.
 # stdout goes back to configd (type:script_output) -> API -> Apply dialog.
 # Log file persists for the diagnostics page to display.
+# NOTE: reconfigure.py logs only to stdout; we tee it to the log file here.
+# Do NOT add a Python FileHandler — that would double every line.
 echo "=== Reconfigure started at $(date) ===" > "$RECONFIGURE_LOG"
 
 # Use a temp file to capture exit code since PIPESTATUS is bash-only

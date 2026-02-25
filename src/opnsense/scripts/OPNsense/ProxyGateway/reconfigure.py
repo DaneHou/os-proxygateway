@@ -27,27 +27,24 @@ LOG_DATEFMT = "%Y-%m-%dT%H:%M:%SZ"
 
 
 def setup_logging(log_level="info"):
-    """Configure structured logging to stdout and aggregate log file."""
+    """Configure structured logging to stdout only.
+
+    File logging is handled by reconfigure.sh which pipes our stdout
+    through ``tee -a reconfigure.log``.  Having a Python FileHandler
+    on the same file caused every log line to appear twice.
+    """
     level = getattr(logging, log_level.upper(), logging.INFO)
 
     formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATEFMT)
     formatter.converter = lambda *args: __import__("time").gmtime()
 
-    # Console handler
+    # Console handler (stdout → reconfigure.sh tee → log file)
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(formatter)
-
-    # File handler — aggregate reconfigure log
-    os.makedirs(LOGDIR, exist_ok=True)
-    file_handler = logging.FileHandler(
-        os.path.join(LOGDIR, "reconfigure.log"), mode="a"
-    )
-    file_handler.setFormatter(formatter)
 
     root = logging.getLogger()
     root.setLevel(level)
     root.addHandler(console)
-    root.addHandler(file_handler)
 
 
 log = logging.getLogger("reconfig")
