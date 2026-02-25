@@ -4,6 +4,9 @@ PLUGIN_ARCH?=	freebsd-amd64
 
 TUN2SOCKS_VERSION=	2.6.0
 TUN2SOCKS_URL=		https://github.com/xjasonlyu/tun2socks/releases/download/v$(TUN2SOCKS_VERSION)/tun2socks-$(PLUGIN_ARCH).zip
+# SHA256 hash of the tun2socks zip for integrity verification.
+# Set per-architecture; leave empty to skip verification (prints hash for you to record).
+TUN2SOCKS_SHA256?=
 
 PREFIX?=	/usr/local
 DESTDIR?=
@@ -103,6 +106,20 @@ install-tun2socks:
 	@mkdir -p $(BIN_DIR)
 	@if [ ! -x $(BIN_DIR)/tun2socks ]; then \
 		fetch -o /tmp/tun2socks.zip $(TUN2SOCKS_URL) && \
+		if [ -n "$(TUN2SOCKS_SHA256)" ]; then \
+			ACTUAL=$$(sha256 -q /tmp/tun2socks.zip) && \
+			if [ "$$ACTUAL" != "$(TUN2SOCKS_SHA256)" ]; then \
+				echo "ERROR: SHA256 checksum mismatch!"; \
+				echo "  Expected: $(TUN2SOCKS_SHA256)"; \
+				echo "  Actual:   $$ACTUAL"; \
+				rm -f /tmp/tun2socks.zip; \
+				exit 1; \
+			fi; \
+			echo ">>> SHA256 verified: $$ACTUAL"; \
+		else \
+			echo ">>> WARNING: TUN2SOCKS_SHA256 not set — skipping integrity check"; \
+			echo ">>> Downloaded file SHA256: $$(sha256 -q /tmp/tun2socks.zip)"; \
+		fi && \
 		unzip -o /tmp/tun2socks.zip -d /tmp/ && \
 		mv /tmp/tun2socks-$(PLUGIN_ARCH) $(BIN_DIR)/tun2socks && \
 		chmod +x $(BIN_DIR)/tun2socks && \

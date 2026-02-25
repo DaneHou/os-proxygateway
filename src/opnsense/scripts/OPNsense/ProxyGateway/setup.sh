@@ -71,8 +71,8 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# Validate name (alphanumeric + underscore/hyphen, max 16 chars)
-echo "$NAME" | grep -qE '^[a-zA-Z0-9_-]{1,16}$' || {
+# Validate name (alphanumeric + underscore, max 16 chars — must match MVC model)
+echo "$NAME" | grep -qE '^[a-zA-Z0-9_]{1,16}$' || {
     echo "ERROR: Invalid connection name: $NAME"
     exit 1
 }
@@ -164,18 +164,24 @@ T2S_PID=$!
 echo "$T2S_PID" > "$PIDFILE"
 log_debug "tun2socks spawned with PID $T2S_PID"
 
-# Wait for tun2socks to create the interface
-sleep 0.5
-if ! kill -0 "$T2S_PID" 2>/dev/null; then
-    log_error "tun2socks failed to start — check ${LOGFILE} for details"
-    tail -20 "$LOGFILE" 2>/dev/null || true
-    rm -f "$PIDFILE"
-    exit 1
-fi
+# Wait for tun2socks to create the interface (poll every 0.25s, max 5s)
+WAIT=0
+while [ $WAIT -lt 20 ]; do
+    if ! kill -0 "$T2S_PID" 2>/dev/null; then
+        log_error "tun2socks exited prematurely — check ${LOGFILE} for details"
+        tail -20 "$LOGFILE" 2>/dev/null || true
+        rm -f "$PIDFILE"
+        exit 1
+    fi
+    if ifconfig "$IFACE" >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.25
+    WAIT=$((WAIT + 1))
+done
 
-# Verify tun2socks created the interface
 if ! ifconfig "$IFACE" >/dev/null 2>&1; then
-    log_error "tun2socks started but interface $IFACE was not created"
+    log_error "tun2socks started but interface $IFACE was not created within 5s"
     kill "$T2S_PID" 2>/dev/null || true
     rm -f "$PIDFILE"
     exit 1
