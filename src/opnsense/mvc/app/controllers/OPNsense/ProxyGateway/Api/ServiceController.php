@@ -61,17 +61,21 @@ class ServiceController extends ApiMutableServiceControllerBase
 
             $backend = new \OPNsense\Core\Backend();
 
-            // Re-register interfaces so OPNsense picks up new/removed devices
+            // Register device names so OPNsense recognizes pgw_* devices
             $backend->configdRun('interface invoke registration');
 
             // Apply the desired config (creates TUN devices, writes _router files)
             $response = trim($backend->configdpRun('proxygateway reconfigure'));
 
-            // Sync interface IPs + gateways into config.xml ONCE, after
-            // reconfigure has created TUN devices and written _router files.
+            // Auto-assign interfaces, sync IPs, and create gateways in config.xml.
+            // This also auto-assigns pgw_* interfaces that the user hasn't
+            // manually assigned, eliminating the Interfaces > Assignments step.
             proxygateway_sync_interfaces();
 
-            // Reconfigure routes ONCE to pick up gateways with the updated IPs.
+            // Re-register so OPNsense picks up newly auto-assigned interfaces
+            $backend->configdRun('interface invoke registration');
+
+            // Reconfigure routes to pick up gateways with the updated IPs.
             $backend->configdRun('interface routes reconfigure');
 
             $result = ['status' => 'ok', 'response' => $response];
