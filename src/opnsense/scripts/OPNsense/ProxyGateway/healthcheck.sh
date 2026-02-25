@@ -22,8 +22,8 @@ LOGDIR="/var/log/proxygateway"
 DEFAULT_TARGET="http://1.1.1.1/"
 
 NAME="$1"
-TARGET="${2:-$DEFAULT_TARGET}"
-TIMEOUT="${3:-5}"
+TARGET="${2:-}"
+TIMEOUT="${3:-10}"
 
 if [ -z "$NAME" ]; then
     echo "Usage: $0 <name> [target_url] [timeout_seconds]"
@@ -52,6 +52,12 @@ if [ ! -f "$CONFFILE" ]; then
 fi
 
 . "$CONFFILE"
+
+# Use custom health check target from .conf if no argument was passed.
+# HEALTH_TARGET is written by reconfigure.py's save_healthcheck_config().
+if [ -z "$TARGET" ]; then
+    TARGET="${HEALTH_TARGET:-$DEFAULT_TARGET}"
+fi
 
 # Check if tun2socks process is alive
 if [ -f "${RUNDIR}/${NAME}.pid" ]; then
