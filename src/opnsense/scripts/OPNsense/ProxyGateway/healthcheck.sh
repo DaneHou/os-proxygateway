@@ -30,6 +30,12 @@ if [ -z "$NAME" ]; then
     exit 1
 fi
 
+# Validate name (alphanumeric + underscore, max 16 chars — must match MVC model)
+echo "$NAME" | grep -qE '^[a-zA-Z0-9_]{1,16}$' || {
+    echo "ERROR: Invalid connection name: $NAME"
+    exit 1
+}
+
 CONFFILE="${RUNDIR}/${NAME}.conf"
 STATUSFILE="${RUNDIR}/${NAME}.status"
 LOGFILE="${LOGDIR}/${NAME}.log"

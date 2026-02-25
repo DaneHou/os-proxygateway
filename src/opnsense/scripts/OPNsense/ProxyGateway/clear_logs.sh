@@ -16,7 +16,7 @@ NAME="$1"
 
 if [ -n "$NAME" ]; then
     # Validate name
-    echo "$NAME" | grep -qE '^[a-zA-Z0-9_-]{1,16}$' || {
+    echo "$NAME" | grep -qE '^[a-zA-Z0-9_]{1,16}$' || {
         echo "ERROR: Invalid connection name: $NAME"
         exit 1
     }

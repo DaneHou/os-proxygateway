@@ -208,8 +208,12 @@ def main():
         print(f"ERROR: tun2socks binary is not executable: {tun2socks}")
         sys.exit(1)
 
-    # Initialize logging with configured level
-    log_level = desired_config.get("logLevel", "info")
+    # Initialize logging — logLevel is per-connection in the JSON, use the first one
+    log_level = "info"
+    for conn in desired_config.get("connections", []):
+        if conn.get("logLevel"):
+            log_level = conn["logLevel"]
+            break
     setup_logging(log_level)
 
     log.info("──── BEGIN RECONFIGURE ────")
