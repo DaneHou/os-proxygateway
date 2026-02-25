@@ -3,9 +3,6 @@
 # reconfigure.sh — Read config model, diff against running state, start/stop as needed
 # Called by configd: configctl proxygateway reconfigure
 # Output is captured by configd (type:script_output) and returned to the API.
-#
-# Concurrency: configd serializes commands of the same action type, so
-# concurrent reconfigure runs are already prevented at the configd level.
 
 SCRIPT_DIR=$(dirname "$0")
 RUNDIR="/var/run/proxygateway"
@@ -36,12 +33,7 @@ fi
 # NOTE: reconfigure.py logs only to stdout; we tee it to the log file here.
 # Do NOT add a Python FileHandler — that would double every line.
 echo "=== Reconfigure started at $(date) ===" > "$RECONFIGURE_LOG"
-
-# Use a temp file to capture exit code since PIPESTATUS is bash-only
-EXIT_FILE=$(mktemp /tmp/pgw_rc.XXXXXX)
-( /usr/local/bin/python3 "${SCRIPT_DIR}/reconfigure.py" "$DESIRED_CONFIG" 2>&1; echo $? > "$EXIT_FILE" ) | tee -a "$RECONFIGURE_LOG"
-EXIT_CODE=$(cat "$EXIT_FILE")
-rm -f "$EXIT_FILE"
-
-echo "=== Reconfigure finished at $(date) (exit code: ${EXIT_CODE}) ===" >> "$RECONFIGURE_LOG"
-exit "${EXIT_CODE:-1}"
+/usr/local/bin/python3 "${SCRIPT_DIR}/reconfigure.py" "$DESIRED_CONFIG" 2>&1 | tee -a "$RECONFIGURE_LOG"
+EXIT_CODE=${PIPESTATUS[0]:-$?}
+echo "=== Reconfigure finished at $(date) (exit code: $EXIT_CODE) ===" >> "$RECONFIGURE_LOG"
+exit $EXIT_CODE
