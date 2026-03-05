@@ -102,7 +102,7 @@ class DiagnosticsController extends ApiControllerBase
         if ($this->request->isPost()) {
             $name = $this->request->getPost('name');
 
-            if (empty($name) || !preg_match('/^[a-zA-Z0-9_-]{1,16}$/', $name)) {
+            if (empty($name) || !preg_match('/^[a-zA-Z0-9_]{1,16}$/', $name)) {
                 return ['status' => 'failed', 'message' => 'Connection name is required'];
             }
 
@@ -126,7 +126,7 @@ class DiagnosticsController extends ApiControllerBase
     public function getLogsAction()
     {
         $name = $this->request->get('name', null, '');
-        if (!empty($name) && !preg_match('/^[a-zA-Z0-9_-]{1,16}$/', $name)) {
+        if (!empty($name) && !preg_match('/^[a-zA-Z0-9_]{1,16}$/', $name)) {
             return ['status' => 'failed', 'message' => 'Invalid connection name'];
         }
         $lines = (int)$this->request->get('lines', null, 50);
@@ -193,6 +193,10 @@ class DiagnosticsController extends ApiControllerBase
 
         if ($this->request->isPost()) {
             $name = $this->request->getPost('name', null, '');
+
+            if (!empty($name) && !preg_match('/^[a-zA-Z0-9_]{1,16}$/', $name)) {
+                return ['status' => 'failed', 'message' => 'Invalid connection name'];
+            }
 
             $backend = new \OPNsense\Core\Backend();
             $response = trim($backend->configdRun("proxygateway clearlogs {$name}"));

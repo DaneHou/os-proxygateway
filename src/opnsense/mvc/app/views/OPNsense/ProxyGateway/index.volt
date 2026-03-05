@@ -96,16 +96,6 @@
         }
         $(document).on('change', '#connection\\.authEnabled', toggleAuthFields);
 
-        // Toggle DNS fields visibility
-        function toggleDnsFields() {
-            if ($('#connection\\.dnsMode').val() === 'custom') {
-                $('.dns_custom_fields').closest('tr').show();
-            } else {
-                $('.dns_custom_fields').closest('tr').hide();
-            }
-        }
-        $(document).on('change', '#connection\\.dnsMode', toggleDnsFields);
-
         // Toggle health check fields visibility
         function toggleHealthFields() {
             if ($('#connection\\.healthCheckEnabled').is(':checked')) {

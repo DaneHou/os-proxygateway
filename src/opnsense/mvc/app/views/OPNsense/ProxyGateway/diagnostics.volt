@@ -86,7 +86,7 @@
                     select.find('option:not(:first,:nth-child(2))').remove();
                     $.each(data.data.connections, function(idx, conn) {
                         if (select.find('option[value="' + conn.name + '"]').length === 0) {
-                            select.append('<option value="' + conn.name + '">' + conn.name + '</option>');
+                            select.append($('<option>').val(conn.name).text(conn.name));
                         }
                     });
                     select.val(currentVal);
@@ -119,27 +119,29 @@
                         }
 
                         var tunnel = (conn.tun_local && conn.tun_local !== '-')
-                            ? conn.tun_local + ' &lt;-&gt; ' + conn.tun_peer
+                            ? conn.tun_local + ' <-> ' + conn.tun_peer
                             : '-';
 
-                        var actions = '';
-                        if (conn.status === 'up' || conn.status === 'down' || conn.status === 'degraded') {
-                            actions = '<button class="btn btn-xs btn-default btn-test" data-name="' + conn.name + '">' +
-                                '<span class="fa fa-fw fa-heartbeat"></span> Test</button>';
-                        } else if (conn.status === 'not_running') {
-                            actions = '<span class="text-muted">Apply to start</span>';
-                        }
+                        var row = $('<tr>');
+                        row.append($('<td>').text(conn.name));
+                        row.append($('<td>').html($('<code>').text(conn.interface)));
+                        row.append($('<td>').text(conn.proxy_type.toUpperCase() + '://' + conn.proxy_addr + ':' + conn.proxy_port));
+                        row.append($('<td>').html(statusIcon + ' ' + statusText));
+                        row.append($('<td>').text(latency));
+                        row.append($('<td>').text(tunnel));
+                        row.append($('<td>').text(conn.pid || '-'));
 
-                        var row = '<tr>' +
-                            '<td>' + conn.name + '</td>' +
-                            '<td><code>' + conn.interface + '</code></td>' +
-                            '<td>' + conn.proxy_type.toUpperCase() + '://' + conn.proxy_addr + ':' + conn.proxy_port + '</td>' +
-                            '<td>' + statusIcon + ' ' + statusText + '</td>' +
-                            '<td>' + latency + '</td>' +
-                            '<td>' + tunnel + '</td>' +
-                            '<td>' + (conn.pid || '-') + '</td>' +
-                            '<td>' + actions + '</td>' +
-                            '</tr>';
+                        var actionsCell = $('<td>');
+                        if (conn.status === 'up' || conn.status === 'down' || conn.status === 'degraded') {
+                            actionsCell.append(
+                                $('<button class="btn btn-xs btn-default btn-test">').attr('data-name', conn.name)
+                                    .html('<span class="fa fa-fw fa-heartbeat"></span> Test')
+                            );
+                        } else if (conn.status === 'not_running') {
+                            actionsCell.append($('<span class="text-muted">').text('Apply to start'));
+                        }
+                        row.append(actionsCell);
+
                         tbody.append(row);
                     });
                 } else {
@@ -175,7 +177,7 @@
                 select.find('option:not(:first)').remove();
                 if (data.connections) {
                     $.each(data.connections, function(idx, name) {
-                        select.append('<option value="' + name + '">' + name + '</option>');
+                        select.append($('<option>').val(name).text(name));
                     });
                 }
                 // Restore previous selection if still exists
