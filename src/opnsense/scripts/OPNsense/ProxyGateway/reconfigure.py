@@ -13,6 +13,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 
 RUNDIR = "/var/run/proxygateway"
 LOGDIR = "/var/log/proxygateway"
@@ -27,27 +28,24 @@ LOG_DATEFMT = "%Y-%m-%dT%H:%M:%SZ"
 
 
 def setup_logging(log_level="info"):
-    """Configure structured logging to stdout and aggregate log file."""
+    """Configure structured logging to stdout only.
+
+    File logging is handled by reconfigure.sh which pipes our stdout
+    through ``tee -a reconfigure.log``.  Having a Python FileHandler
+    on the same file caused every log line to appear twice.
+    """
     level = getattr(logging, log_level.upper(), logging.INFO)
 
     formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATEFMT)
     formatter.converter = lambda *args: __import__("time").gmtime()
 
-    # Console handler
+    # Console handler (stdout → reconfigure.sh tee → log file)
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(formatter)
-
-    # File handler — aggregate reconfigure log
-    os.makedirs(LOGDIR, exist_ok=True)
-    file_handler = logging.FileHandler(
-        os.path.join(LOGDIR, "reconfigure.log"), mode="a"
-    )
-    file_handler.setFormatter(formatter)
 
     root = logging.getLogger()
     root.setLevel(level)
     root.addHandler(console)
-    root.addHandler(file_handler)
 
 
 log = logging.getLogger("reconfig")
@@ -102,12 +100,6 @@ def run_setup(conn):
     if conn.get("tunMTU"):
         cmd.extend(["--tun-mtu", conn["tunMTU"]])
 
-    if conn.get("dnsMode"):
-        cmd.extend(["--dns-mode", conn["dnsMode"]])
-
-    if conn.get("dnsServer"):
-        cmd.extend(["--dns-server", conn["dnsServer"]])
-
     if conn.get("proxyInterface"):
         cmd.extend(["--proxy-iface", conn["proxyInterface"]])
 
@@ -133,21 +125,31 @@ def run_setup(conn):
     return result.returncode
 
 
+def save_healthcheck_config(conn):
+    """Append health check settings to the connection's .conf file.
+
+    This makes the custom target available to healthcheck.sh regardless of
+    whether it's called from reconfigure.py or the Test button (via configd).
+    """
+    name = conn["name"]
+    conf_file = os.path.join(RUNDIR, f"{name}.conf")
+    target = conn.get("healthCheckTarget", "")
+    if os.path.isfile(conf_file) and target:
+        with open(conf_file, "a") as f:
+            f.write(f'HEALTH_TARGET="{target}"\n')
+
+
 def run_healthcheck(conn):
     """Run a quick health check after starting a connection.
 
     Tests actual proxy connectivity by sending traffic through the proxy.
-    Only passes a custom target if the user explicitly configured one
-    (non-empty healthCheckTarget). Otherwise the healthcheck script uses
-    its built-in default (http://1.1.1.1/).
+    The target URL is read from the .conf file by healthcheck.sh (written
+    by save_healthcheck_config), so we don't pass it as an argument.
     """
     name = conn["name"]
     cmd = ["/bin/sh", HEALTHCHECK_SCRIPT, name]
-    target = conn.get("healthCheckTarget", "")
-    if target:
-        cmd.append(target)
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
         output = result.stdout.strip()
         if result.returncode == 0:
             print(f"  Health check: {output}")
@@ -155,7 +157,7 @@ def run_healthcheck(conn):
             print(f"  Health check: FAILED — {output}")
         return result.returncode
     except subprocess.TimeoutExpired:
-        print(f"  Health check: FAILED — timed out after 15s")
+        print(f"  Health check: FAILED — timed out after 20s")
         return 1
 
 
@@ -214,8 +216,12 @@ def main():
         print(f"ERROR: tun2socks binary is not executable: {tun2socks}")
         sys.exit(1)
 
-    # Initialize logging with configured level
-    log_level = desired_config.get("logLevel", "info")
+    # Initialize logging — logLevel is per-connection in the JSON, use the first one
+    log_level = "info"
+    for conn in desired_config.get("connections", []):
+        if conn.get("logLevel"):
+            log_level = conn["logLevel"]
+            break
     setup_logging(log_level)
 
     log.info("──── BEGIN RECONFIGURE ────")
@@ -257,8 +263,22 @@ def main():
         run_teardown(name)
 
     # Execute: start new/changed connections, then verify connectivity
+    started = []
     for name in sorted(to_start | to_restart):
         if run_setup(desired[name]) == 0:
+            started.append(name)
+            # Save health check config to .conf so healthcheck.sh (called by
+            # the Test button or cron) uses the same target/settings.
+            save_healthcheck_config(desired[name])
+
+    # Give tun2socks time to complete the SOCKS handshake before probing.
+    # setup.sh exits once the TUN interface is up, but the proxy connection
+    # needs another moment to become usable.
+    if started:
+        time.sleep(2)
+
+    for name in started:
+        if desired[name].get("healthCheckEnabled", "1") == "1":
             run_healthcheck(desired[name])
 
     # Summary

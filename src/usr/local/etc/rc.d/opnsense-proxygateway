@@ -30,12 +30,17 @@ extra_commands="status"
 proxygateway_start()
 {
     echo "Starting ${name}."
-    mkdir -p "$RUNDIR"
+    mkdir -p -m 0750 "$RUNDIR"
 
     # Write master PID (this rc.d script's PID, for service management)
     echo $$ > "$pidfile"
 
-    # Generate desired config from model and trigger reconfigure
+    # Generate desired.json from model if it doesn't exist
+    # (e.g., after reboot when /var/run/ was wiped)
+    if [ ! -f "${RUNDIR}/desired.json" ]; then
+        /usr/local/bin/php /usr/local/opnsense/scripts/OPNsense/ProxyGateway/generate_desired.php
+    fi
+
     /usr/local/sbin/configctl proxygateway reconfigure
 }
 

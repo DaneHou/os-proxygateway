@@ -24,8 +24,6 @@ usage() {
     echo "  --auth-pass <pass>       Proxy auth password"
     echo "  --tun-addr <ip>          Local tunnel address (default: auto-assign)"
     echo "  --tun-mtu <mtu>          Tunnel MTU (default: 1500)"
-    echo "  --dns-mode <mode>        DNS mode: tunnel|custom (default: tunnel)"
-    echo "  --dns-server <ip>        Custom DNS server (requires --dns-mode custom)"
     echo "  --loglevel <level>       Log level: debug|info|warn|error (default: warn)"
     echo "  --defer-routes           Skip route reconfiguration (for batch operations)"
     exit 1
@@ -45,8 +43,6 @@ AUTH_USER=""
 AUTH_PASS=""
 TUN_ADDR=""
 TUN_MTU="1500"
-DNS_MODE="tunnel"
-DNS_SERVER=""
 LOGLEVEL="warn"
 DEFER_ROUTES="no"
 PROXY_IFACE="wan"
@@ -62,13 +58,10 @@ while [ $# -gt 0 ]; do
             shift 1 ;;
         --tun-addr)   TUN_ADDR="$2"; shift 2 ;;
         --tun-mtu)    TUN_MTU="$2"; shift 2 ;;
-        --dns-mode)   DNS_MODE="$2"; shift 2 ;;
-        --dns-server) DNS_SERVER="$2"; shift 2 ;;
         --proxy-iface) PROXY_IFACE="$2"; shift 2 ;;
         --defer-routes) DEFER_ROUTES="yes"; shift 1 ;;
         --loglevel)
             # tun2socks uses Go's zap logger: debug|info|warn|error|panic|fatal
-            # Map user-friendly "warning" to "warn" for compatibility
             case "$2" in
                 warning) LOGLEVEL="warn" ;;
                 *)       LOGLEVEL="$2" ;;
@@ -78,8 +71,8 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# Validate name (alphanumeric + underscore/hyphen, max 16 chars)
-echo "$NAME" | grep -qE '^[a-zA-Z0-9_-]{1,16}$' || {
+# Validate name (alphanumeric + underscore, max 16 chars — must match MVC model)
+echo "$NAME" | grep -qE '^[a-zA-Z0-9_]{1,16}$' || {
     echo "ERROR: Invalid connection name: $NAME"
     exit 1
 }
@@ -90,17 +83,21 @@ LOGFILE="${LOGDIR}/${NAME}.log"
 CONFFILE="${RUNDIR}/${NAME}.conf"
 TUNDEVFILE="${RUNDIR}/${NAME}.tundev"
 
-# Ensure directories exist
-mkdir -p "$RUNDIR" "$LOGDIR"
+# Ensure directories exist with restrictive permissions
+mkdir -p -m 0750 "$RUNDIR"
+mkdir -p "$LOGDIR"
 
 # Initialize structured logging
 log_init "setup" "$NAME" "$LOGLEVEL"
 log_set_file "$LOGFILE"
 
 # Check if already running
-if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-    log_error "Connection already running (PID: $(cat "$PIDFILE"))"
-    exit 1
+if [ -f "$PIDFILE" ]; then
+    OLD_PID=$(cat "$PIDFILE")
+    if kill -0 "$OLD_PID" 2>/dev/null; then
+        log_error "Connection already running (PID: $OLD_PID)"
+        exit 1
+    fi
 fi
 
 # Check tun2socks binary
@@ -112,11 +109,9 @@ fi
 # Auto-assign tunnel address if not specified
 if [ -z "$TUN_ADDR" ]; then
     # Use a hash of the name to generate a deterministic address in 172.31.0.0/16
-    # This avoids conflicts between different named connections
     HASH=$(echo -n "$NAME" | md5 | cut -c1-4)
     OCTET3=$(printf "%d" "0x$(echo "$HASH" | cut -c1-2)")
     OCTET4=$(printf "%d" "0x$(echo "$HASH" | cut -c3-4)")
-    # Ensure octets are in valid range (1-254) and even for .1/.2 pair
     OCTET3=$(( (OCTET3 % 254) + 1 ))
     OCTET4=$(( (OCTET4 % 126) * 2 + 1 ))
     TUN_ADDR="172.31.${OCTET3}.${OCTET4}"
@@ -146,52 +141,47 @@ log_separator "BEGIN SETUP"
 log_info "Interface: $IFACE"
 log_info "Tunnel: ${TUN_LOCAL} <-> ${TUN_PEER} (MTU: ${TUN_MTU})"
 log_info "Proxy: ${PROXY_TYPE}://${PROXY_ADDR}:${PROXY_PORT}"
-log_info "DNS mode: ${DNS_MODE}${DNS_SERVER:+ (server: $DNS_SERVER)}"
 
 # Step 1: Ensure no conflicting interface exists
-# tun2socks creates its own TUN device via the FreeBSD cloner and renames it
-# to the requested name. We must ensure that name is free.
 if ifconfig "$IFACE" >/dev/null 2>&1; then
     log_info "Destroying existing interface $IFACE for clean setup"
     ifconfig "$IFACE" destroy 2>/dev/null || true
 fi
 
 # Step 2: Start tun2socks with the final interface name directly.
-# tun2socks opens /dev/tun (cloner), gets an auto-assigned tunN device,
-# then renames it to $IFACE. This ensures tun2socks owns the device that
-# IS the pgw_* interface — no device mismatch possible.
 log_info "Starting tun2socks (device=$IFACE, loglevel: ${LOGLEVEL})..."
 
-# Build tun2socks command with optional UDP timeout
-TUN2SOCKS_CMD="$TUN2SOCKS -device $IFACE -proxy $PROXY_URL -loglevel $LOGLEVEL"
-
-# For SOCKS5 proxies, add UDP timeout to ensure UDP relay works properly
-# This is especially important for Tailscale and other SOCKS5 proxies that support UDP
+# Build tun2socks command with proper quoting (no stored-in-variable expansion)
 if [ "$PROXY_TYPE" = "socks5" ] || [ "$PROXY_TYPE" = "socks5tls" ]; then
-    # Set UDP timeout to 5 minutes (300s) to keep UDP associations alive
-    # This helps with DNS and other UDP-based protocols
-    TUN2SOCKS_CMD="$TUN2SOCKS_CMD -udp-timeout 300s"
-    log_debug "Added UDP timeout (300s) for SOCKS5 proxy"
+    # SOCKS5: add UDP timeout for UDP relay support
+    log_debug "Using UDP timeout (300s) for SOCKS5 proxy"
+    "$TUN2SOCKS" -device "$IFACE" -proxy "$PROXY_URL" -loglevel "$LOGLEVEL" -udp-timeout 300s >> "$LOGFILE" 2>&1 &
+else
+    "$TUN2SOCKS" -device "$IFACE" -proxy "$PROXY_URL" -loglevel "$LOGLEVEL" >> "$LOGFILE" 2>&1 &
 fi
-
-$TUN2SOCKS_CMD >> "$LOGFILE" 2>&1 &
 
 T2S_PID=$!
 echo "$T2S_PID" > "$PIDFILE"
 log_debug "tun2socks spawned with PID $T2S_PID"
 
-# Wait for tun2socks to create the interface
-sleep 0.5
-if ! kill -0 "$T2S_PID" 2>/dev/null; then
-    log_error "tun2socks failed to start — check ${LOGFILE} for details"
-    tail -20 "$LOGFILE" 2>/dev/null || true
-    rm -f "$PIDFILE"
-    exit 1
-fi
+# Wait for tun2socks to create the interface (poll every 0.25s, max 5s)
+WAIT=0
+while [ $WAIT -lt 20 ]; do
+    if ! kill -0 "$T2S_PID" 2>/dev/null; then
+        log_error "tun2socks exited prematurely — check ${LOGFILE} for details"
+        tail -20 "$LOGFILE" 2>/dev/null || true
+        rm -f "$PIDFILE"
+        exit 1
+    fi
+    if ifconfig "$IFACE" >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.25
+    WAIT=$((WAIT + 1))
+done
 
-# Verify tun2socks created the interface
 if ! ifconfig "$IFACE" >/dev/null 2>&1; then
-    log_error "tun2socks started but interface $IFACE was not created"
+    log_error "tun2socks started but interface $IFACE was not created within 5s"
     kill "$T2S_PID" 2>/dev/null || true
     rm -f "$PIDFILE"
     exit 1
@@ -209,17 +199,11 @@ ifconfig "$IFACE" inet "$TUN_LOCAL" "$TUN_PEER" mtu "$TUN_MTU" up
 log_debug "Device ${IFACE} configured: ${TUN_LOCAL}/${TUN_PEER}"
 
 # Step 4: Write router and monitor files for OPNsense gateway auto-detection
-# OPNsense's Autoconf::getRouter() reads from /tmp/{interface}_router
 ROUTER_FILE="/tmp/${IFACE}_router"
 echo "$TUN_PEER" > "$ROUTER_FILE"
 chmod 644 "$ROUTER_FILE"
 log_debug "Wrote router file: ${ROUTER_FILE} -> ${TUN_PEER}"
 
-# Write monitor IP file for dpinger health checks.
-# Use the proxy server address as the monitor target — it's reachable via
-# the physical interface without going through the TUN, making ICMP pings
-# reliable (SOCKS5 does not natively support ICMP, so pinging the TUN peer
-# through tun2socks would be unreliable).
 MONITOR_FILE="/tmp/${IFACE}_monitorip"
 echo "$PROXY_ADDR" > "$MONITOR_FILE"
 chmod 644 "$MONITOR_FILE"
@@ -238,12 +222,9 @@ PROXY_URL="${PROXY_URL}"
 TUN_LOCAL="${TUN_LOCAL}"
 TUN_PEER="${TUN_PEER}"
 TUN_MTU="${TUN_MTU}"
-DNS_MODE="${DNS_MODE}"
-DNS_SERVER="${DNS_SERVER}"
 PROXY_IFACE="${PROXY_IFACE}"
 PID="${T2S_PID}"
 EOF
-# Secure file permissions: owner (root) read/write only
 chmod 600 "$CONFFILE"
 chown root:wheel "$CONFFILE"
 log_debug "Saved connection config to ${CONFFILE} (secure permissions)"

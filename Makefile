@@ -4,6 +4,9 @@ PLUGIN_ARCH?=	freebsd-amd64
 
 TUN2SOCKS_VERSION=	2.6.0
 TUN2SOCKS_URL=		https://github.com/xjasonlyu/tun2socks/releases/download/v$(TUN2SOCKS_VERSION)/tun2socks-$(PLUGIN_ARCH).zip
+# SHA256 hash of the tun2socks zip for integrity verification.
+# Set per-architecture; leave empty to skip verification (prints hash for you to record).
+TUN2SOCKS_SHA256?=
 
 PREFIX?=	/usr/local
 DESTDIR?=
@@ -57,6 +60,7 @@ install-plugin:
 	# MVC models
 	@mkdir -p $(MVC_DIR)/models/OPNsense/ProxyGateway/ACL
 	@mkdir -p $(MVC_DIR)/models/OPNsense/ProxyGateway/Menu
+	@mkdir -p $(MVC_DIR)/models/OPNsense/ProxyGateway/Migrations
 	@cp src/opnsense/mvc/app/models/OPNsense/ProxyGateway/ProxyGateway.php \
 		$(MVC_DIR)/models/OPNsense/ProxyGateway/
 	@cp src/opnsense/mvc/app/models/OPNsense/ProxyGateway/ProxyGateway.xml \
@@ -65,6 +69,8 @@ install-plugin:
 		$(MVC_DIR)/models/OPNsense/ProxyGateway/ACL/
 	@cp src/opnsense/mvc/app/models/OPNsense/ProxyGateway/Menu/Menu.xml \
 		$(MVC_DIR)/models/OPNsense/ProxyGateway/Menu/
+	@cp src/opnsense/mvc/app/models/OPNsense/ProxyGateway/Migrations/*.php \
+		$(MVC_DIR)/models/OPNsense/ProxyGateway/Migrations/
 
 	# MVC views
 	@mkdir -p $(MVC_DIR)/views/OPNsense/ProxyGateway
@@ -93,8 +99,9 @@ install-plugin:
 	@cp src/usr/local/etc/rc.d/opnsense-proxygateway $(RCD_DIR)/
 	@chmod +x $(RCD_DIR)/opnsense-proxygateway
 
-	# Runtime directories
-	@mkdir -p /var/run/proxygateway /var/log/proxygateway
+	# Runtime directories (restrictive permissions for credential files)
+	@mkdir -p -m 0750 /var/run/proxygateway
+	@mkdir -p /var/log/proxygateway
 	@echo ">>> Plugin files installed."
 
 install-tun2socks:
@@ -102,6 +109,20 @@ install-tun2socks:
 	@mkdir -p $(BIN_DIR)
 	@if [ ! -x $(BIN_DIR)/tun2socks ]; then \
 		fetch -o /tmp/tun2socks.zip $(TUN2SOCKS_URL) && \
+		if [ -n "$(TUN2SOCKS_SHA256)" ]; then \
+			ACTUAL=$$(sha256 -q /tmp/tun2socks.zip) && \
+			if [ "$$ACTUAL" != "$(TUN2SOCKS_SHA256)" ]; then \
+				echo "ERROR: SHA256 checksum mismatch!"; \
+				echo "  Expected: $(TUN2SOCKS_SHA256)"; \
+				echo "  Actual:   $$ACTUAL"; \
+				rm -f /tmp/tun2socks.zip; \
+				exit 1; \
+			fi; \
+			echo ">>> SHA256 verified: $$ACTUAL"; \
+		else \
+			echo ">>> WARNING: TUN2SOCKS_SHA256 not set — skipping integrity check"; \
+			echo ">>> Downloaded file SHA256: $$(sha256 -q /tmp/tun2socks.zip)"; \
+		fi && \
 		unzip -o /tmp/tun2socks.zip -d /tmp/ && \
 		mv /tmp/tun2socks-$(PLUGIN_ARCH) $(BIN_DIR)/tun2socks && \
 		chmod +x $(BIN_DIR)/tun2socks && \
