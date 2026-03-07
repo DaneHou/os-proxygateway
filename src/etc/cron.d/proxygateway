@@ -1,0 +1,3 @@
+# Proxy Gateway watchdog — restart crashed tun2socks connections
+# Runs every minute; the script itself checks if watchdog is enabled
+* * * * * root /usr/local/sbin/configctl proxygateway watchdog 2>/dev/null || true

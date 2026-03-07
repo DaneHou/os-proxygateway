@@ -1,5 +1,5 @@
 PLUGIN_NAME=	os-proxygateway
-PLUGIN_VERSION=	1.0.2
+PLUGIN_VERSION=	1.1.0
 PLUGIN_ARCH?=	freebsd-amd64
 
 TUN2SOCKS_VERSION=	2.6.0
@@ -86,6 +86,10 @@ install-plugin:
 	@cp src/opnsense/scripts/OPNsense/ProxyGateway/lib/*.sh $(SCRIPTS_DIR)/lib/
 	@chmod +x $(SCRIPTS_DIR)/*.sh $(SCRIPTS_DIR)/*.py $(SCRIPTS_DIR)/*.php
 
+	# Cron (watchdog)
+	@mkdir -p $(DESTDIR)/etc/cron.d
+	@cp src/etc/cron.d/proxygateway $(DESTDIR)/etc/cron.d/
+
 	# Log rotation
 	@mkdir -p $(DESTDIR)/etc/newsyslog.conf.d
 	@cp src/etc/newsyslog.conf.d/proxygateway.conf $(DESTDIR)/etc/newsyslog.conf.d/
@@ -167,6 +171,7 @@ uninstall:
 	@rm -f $(ACTIONS_DIR)/actions_proxygateway.conf
 	@rm -f $(PLUGINS_DIR)/proxygateway.inc
 	@rm -f $(RCD_DIR)/opnsense-proxygateway
+	@rm -f $(DESTDIR)/etc/cron.d/proxygateway
 	@rm -f $(DESTDIR)/etc/newsyslog.conf.d/proxygateway.conf
 	@rm -rf /var/run/proxygateway
 	@rm -f /var/lib/php/tmp/opnsense_menu_cache.xml 2>/dev/null || true
