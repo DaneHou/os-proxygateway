@@ -155,9 +155,12 @@ log_info "Starting tun2socks (device=$IFACE, loglevel: ${LOGLEVEL})..."
 if [ "$PROXY_TYPE" = "socks5" ] || [ "$PROXY_TYPE" = "socks5tls" ]; then
     # SOCKS5: add UDP timeout for UDP relay support
     log_debug "Using UDP timeout (300s) for SOCKS5 proxy"
-    "$TUN2SOCKS" -device "$IFACE" -proxy "$PROXY_URL" -loglevel "$LOGLEVEL" -udp-timeout 300s >> "$LOGFILE" 2>&1 &
+    "$TUN2SOCKS" -device "$IFACE" -proxy "$PROXY_URL" -loglevel "$LOGLEVEL" \
+        -tcp-sndbuf 256KB -tcp-rcvbuf 256KB -tcp-auto-tuning \
+        -udp-timeout 300s >> "$LOGFILE" 2>&1 &
 else
-    "$TUN2SOCKS" -device "$IFACE" -proxy "$PROXY_URL" -loglevel "$LOGLEVEL" >> "$LOGFILE" 2>&1 &
+    "$TUN2SOCKS" -device "$IFACE" -proxy "$PROXY_URL" -loglevel "$LOGLEVEL" \
+        -tcp-sndbuf 256KB -tcp-rcvbuf 256KB -tcp-auto-tuning >> "$LOGFILE" 2>&1 &
 fi
 
 T2S_PID=$!
