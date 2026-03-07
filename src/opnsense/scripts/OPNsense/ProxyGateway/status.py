@@ -21,6 +21,14 @@ def get_status():
     if not os.path.isdir(RUNDIR):
         return {"connections": connections}
 
+    # Single ifconfig -l call to get all interfaces (avoids N subprocess forks)
+    try:
+        result = subprocess.run(["/sbin/ifconfig", "-l"],
+                                capture_output=True, text=True, timeout=2)
+        all_ifaces = set(result.stdout.strip().split())
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        all_ifaces = set()
+
     conf_files = []
     with os.scandir(RUNDIR) as entries:
         for entry in entries:
@@ -63,14 +71,9 @@ def get_status():
                         key, val = line.split("=", 1)
                         health[key] = val
 
-        # Check interface - use subprocess for better control
+        # Check interface via pre-fetched interface list (no subprocess per connection)
         iface = config.get("IFACE", f"pgw_{name}")
-        try:
-            subprocess.run(["ifconfig", iface], stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, check=True, timeout=1)
-            iface_exists = True
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
-            iface_exists = False
+        iface_exists = iface in all_ifaces
 
         # Determine status using both process state and health check results.
         # Process/interface down = definitely down.
