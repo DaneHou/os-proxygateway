@@ -317,6 +317,9 @@ function proxygateway_boot($verbose = false)
  * This is the same JSON format that ServiceController::reconfigureAction()
  * produces, shared here so the bootup handler can also generate it.
  *
+ * Also manages the watchdog.enabled flag file used by watchdog.sh to
+ * avoid loading PHP on every cron tick.
+ *
  * @param \OPNsense\ProxyGateway\ProxyGateway|null $mdl Optional model instance
  */
 function proxygateway_generate_desired($mdl = null)
@@ -357,6 +360,14 @@ function proxygateway_generate_desired($mdl = null)
     file_put_contents($desiredFile, $configJson);
     chmod($desiredFile, 0600);
     chown($desiredFile, 'root');
+
+    // Manage watchdog flag file — watchdog.sh checks this to avoid PHP overhead
+    $watchdogFlag = '/var/run/proxygateway/watchdog.enabled';
+    if ((string)$mdl->general->watchdogEnabled === '1') {
+        @file_put_contents($watchdogFlag, '1');
+    } else {
+        @unlink($watchdogFlag);
+    }
 }
 
 /**
@@ -384,8 +395,9 @@ function proxygateway_next_opt_key($xml)
  *    (finds next available optN key, sets IP/subnet/enable)
  * 2. Syncs IP address and subnet for already-assigned interfaces
  *
- * Also removes orphaned pgw_* assignments for connections that have been
- * deleted from the model (disabled connections keep their assignment).
+ * Removes pgw_* assignments for connections that have been disabled or
+ * deleted from the model — keeping stale interfaces and gateways around
+ * for disabled connections clutters the routing table and UI.
  *
  * Finally, syncs gateway entries via proxygateway_sync_gateways().
  */
@@ -401,11 +413,13 @@ function proxygateway_sync_interfaces()
     $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
     $changed = false;
 
-    // Collect ALL pgw_* device names in the model (enabled or disabled)
-    // so we can distinguish "disabled" from "deleted" when cleaning up.
-    $allModelPgw = [];
+    // Collect enabled pgw_* device names — only these should have
+    // interface assignments and gateways in config.xml.
+    $enabledPgw = [];
     foreach ($mdl->connections->connection->iterateItems() as $uuid => $conn) {
-        $allModelPgw["pgw_" . (string)$conn->name] = true;
+        if (!empty((string)$conn->enabled)) {
+            $enabledPgw["pgw_" . (string)$conn->name] = true;
+        }
     }
 
     // Auto-assign and sync IP config for enabled connections
@@ -462,12 +476,13 @@ function proxygateway_sync_interfaces()
         }
     }
 
-    // Remove pgw_* assignments for connections deleted from the model.
-    // Disabled connections keep their assignment (gateway sync handles the rest).
+    // Remove pgw_* interface assignments that are not enabled.
+    // This covers both disabled and deleted connections — no reason to
+    // keep a stale interface around when the tunnel is not running.
     $toRemove = [];
     foreach ($xml->interfaces->children() as $ifkey => $iface) {
         $ifDev = (string)$iface->{'if'};
-        if (strpos($ifDev, 'pgw_') === 0 && !isset($allModelPgw[$ifDev])) {
+        if (strpos($ifDev, 'pgw_') === 0 && !isset($enabledPgw[$ifDev])) {
             $toRemove[] = $iface;
         }
     }
