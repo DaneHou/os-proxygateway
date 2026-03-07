@@ -12,6 +12,12 @@
         <help>Automatically start all enabled connections when the system boots. When disabled, connections must be started manually via the Apply button.</help>
     </field>
     <field>
+        <id>general.watchdogEnabled</id>
+        <label>Auto-reconnect (Watchdog)</label>
+        <type>checkbox</type>
+        <help>Automatically restart crashed tun2socks connections. The watchdog checks every 60 seconds and restarts any enabled connection whose process has died.</help>
+    </field>
+    <field>
         <id>general.logLevel</id>
         <label>Log Level</label>
         <type>dropdown</type>
