@@ -67,6 +67,51 @@
     </field>
     <field>
         <type>header</type>
+        <label>Shadowsocks Settings</label>
+        <style>ss_fields</style>
+    </field>
+    <field>
+        <id>connection.ssMethod</id>
+        <label>Encryption Method</label>
+        <type>dropdown</type>
+        <style>ss_fields</style>
+        <help>Shadowsocks encryption method (AEAD ciphers only).</help>
+    </field>
+    <field>
+        <id>connection.ssPassword</id>
+        <label>Shadowsocks Password</label>
+        <type>password</type>
+        <style>ss_fields</style>
+        <help>Shadowsocks encryption password. This is NOT proxy auth — it's the SS shared secret.</help>
+    </field>
+    <field>
+        <id>connection.ssObfs</id>
+        <label>Obfuscation</label>
+        <type>dropdown</type>
+        <style>ss_fields</style>
+        <help>Optional traffic obfuscation plugin (simple-obfs).</help>
+    </field>
+    <field>
+        <id>connection.ssObfsHost</id>
+        <label>Obfuscation Host</label>
+        <type>text</type>
+        <style>ss_obfs_fields</style>
+        <help>Hostname for obfuscation (used as Host header for HTTP obfs or SNI for TLS obfs).</help>
+    </field>
+    <field>
+        <type>header</type>
+        <label>SSH Settings</label>
+        <style>ssh_fields</style>
+    </field>
+    <field>
+        <id>connection.sshKeyFile</id>
+        <label>Private Key File</label>
+        <type>text</type>
+        <style>ssh_fields</style>
+        <help>Path to SSH private key file on the OPNsense filesystem (e.g., /root/.ssh/id_ed25519). Leave empty to use password authentication.</help>
+    </field>
+    <field>
+        <type>header</type>
         <label>Tunnel Settings</label>
     </field>
     <field>
@@ -107,5 +152,108 @@
         <label>Gateway Priority</label>
         <type>text</type>
         <help>Gateway priority for routing (1=highest, 255=lowest).</help>
+    </field>
+    <field>
+        <type>header</type>
+        <label>Speed Test</label>
+    </field>
+    <field>
+        <id>connection.speedTestUrl</id>
+        <label>International Test URL</label>
+        <type>text</type>
+        <help>Custom URL for international speed tests. Must be a direct-download URL. Leave empty to use default (Cloudflare speed test).</help>
+    </field>
+    <field>
+        <id>connection.speedTestUrlDomestic</id>
+        <label>Domestic Test URL</label>
+        <type>text</type>
+        <help>Custom URL for domestic (China) speed tests. Must be a direct-download URL. Leave empty to use default (USTC mirror).</help>
+    </field>
+    <field>
+        <type>header</type>
+        <label>Backup Proxy (Failover)</label>
+    </field>
+    <field>
+        <id>connection.backupEnabled</id>
+        <label>Enable Backup Proxy</label>
+        <type>checkbox</type>
+        <help>Configure a backup proxy that will be used automatically when the primary proxy fails. Requires Health Check to be enabled.</help>
+    </field>
+    <field>
+        <id>connection.backupProxyType</id>
+        <label>Backup Type</label>
+        <type>dropdown</type>
+        <style>backup_fields</style>
+        <help>Backup proxy protocol type.</help>
+    </field>
+    <field>
+        <id>connection.backupProxyServer</id>
+        <label>Backup Server</label>
+        <type>text</type>
+        <style>backup_fields</style>
+        <help>Hostname or IP address of the backup proxy server.</help>
+    </field>
+    <field>
+        <id>connection.backupProxyPort</id>
+        <label>Backup Port</label>
+        <type>text</type>
+        <style>backup_fields</style>
+        <help>Port number of the backup proxy server.</help>
+    </field>
+    <field>
+        <id>connection.backupAuthEnabled</id>
+        <label>Backup Authentication</label>
+        <type>checkbox</type>
+        <style>backup_fields</style>
+        <help>Enable authentication for the backup proxy.</help>
+    </field>
+    <field>
+        <id>connection.backupAuthUser</id>
+        <label>Backup Username</label>
+        <type>text</type>
+        <style>backup_auth_fields</style>
+        <help>Backup proxy authentication username.</help>
+    </field>
+    <field>
+        <id>connection.backupAuthPass</id>
+        <label>Backup Password</label>
+        <type>password</type>
+        <style>backup_auth_fields</style>
+        <help>Backup proxy authentication password.</help>
+    </field>
+    <field>
+        <id>connection.backupSsMethod</id>
+        <label>Backup SS Method</label>
+        <type>dropdown</type>
+        <style>backup_ss_fields</style>
+        <help>Backup Shadowsocks encryption method.</help>
+    </field>
+    <field>
+        <id>connection.backupSsPassword</id>
+        <label>Backup SS Password</label>
+        <type>password</type>
+        <style>backup_ss_fields</style>
+        <help>Backup Shadowsocks encryption password.</help>
+    </field>
+    <field>
+        <id>connection.backupSshKeyFile</id>
+        <label>Backup SSH Key File</label>
+        <type>text</type>
+        <style>backup_ssh_fields</style>
+        <help>Path to SSH private key file for the backup proxy.</help>
+    </field>
+    <field>
+        <id>connection.failoverThreshold</id>
+        <label>Failover Threshold</label>
+        <type>text</type>
+        <style>backup_fields</style>
+        <help>Number of consecutive health check failures before switching to the backup proxy (1-10).</help>
+    </field>
+    <field>
+        <id>connection.failbackEnabled</id>
+        <label>Auto Failback</label>
+        <type>checkbox</type>
+        <style>backup_fields</style>
+        <help>Automatically switch back to the primary proxy when it recovers. The primary is probed directly; after 2 consecutive successes (with a 5-minute cooldown), traffic switches back.</help>
     </field>
 </form>

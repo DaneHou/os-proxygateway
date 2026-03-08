@@ -46,6 +46,11 @@ TUN_MTU="1500"
 LOGLEVEL="warn"
 DEFER_ROUTES="no"
 PROXY_IFACE="wan"
+SS_METHOD=""
+SS_PASSWORD=""
+SS_OBFS=""
+SS_OBFS_HOST=""
+SSH_KEY=""
 
 # Parse optional arguments
 while [ $# -gt 0 ]; do
@@ -59,6 +64,13 @@ while [ $# -gt 0 ]; do
         --tun-addr)   TUN_ADDR="$2"; shift 2 ;;
         --tun-mtu)    TUN_MTU="$2"; shift 2 ;;
         --proxy-iface) PROXY_IFACE="$2"; shift 2 ;;
+        --ss-method)   SS_METHOD="$2"; shift 2 ;;
+        --ss-password-env)
+            SS_PASSWORD="${SS_AUTH_PASS}"
+            shift 1 ;;
+        --ss-obfs)     SS_OBFS="$2"; shift 2 ;;
+        --ss-obfs-host) SS_OBFS_HOST="$2"; shift 2 ;;
+        --ssh-key)     SSH_KEY="$2"; shift 2 ;;
         --defer-routes) DEFER_ROUTES="yes"; shift 1 ;;
         --loglevel)
             # tun2socks uses Go's zap logger: debug|info|warn|error|panic|fatal
@@ -125,17 +137,50 @@ TUN_PEER="$(echo "$TUN_LOCAL" | awk -F. '{printf "%s.%s.%s.", $1, $2, $3}')${TUN
 
 # Build proxy URL
 case "$PROXY_TYPE" in
-    socks5)    PROXY_URL="socks5://" ;;
-    socks5tls) PROXY_URL="socks5://" ;;  # TLS handled via tun2socks flag
-    http)      PROXY_URL="http://" ;;
-    https)     PROXY_URL="http://" ;;     # TLS handled via tun2socks flag
-    *)         log_error "Unknown proxy type: $PROXY_TYPE"; exit 1 ;;
+    socks5|socks5tls)
+        PROXY_URL="socks5://"
+        if [ -n "$AUTH_USER" ] && [ -n "$AUTH_PASS" ]; then
+            PROXY_URL="${PROXY_URL}${AUTH_USER}:${AUTH_PASS}@"
+        fi
+        PROXY_URL="${PROXY_URL}${PROXY_ADDR}:${PROXY_PORT}"
+        ;;
+    http|https)
+        PROXY_URL="http://"
+        if [ -n "$AUTH_USER" ] && [ -n "$AUTH_PASS" ]; then
+            PROXY_URL="${PROXY_URL}${AUTH_USER}:${AUTH_PASS}@"
+        fi
+        PROXY_URL="${PROXY_URL}${PROXY_ADDR}:${PROXY_PORT}"
+        ;;
+    ss)
+        # Shadowsocks: ss://method:password@host:port/?obfs=xxx;obfs-host=xxx
+        PROXY_URL="ss://"
+        if [ -n "$SS_METHOD" ] && [ -n "$SS_PASSWORD" ]; then
+            PROXY_URL="${PROXY_URL}${SS_METHOD}:${SS_PASSWORD}@"
+        fi
+        PROXY_URL="${PROXY_URL}${PROXY_ADDR}:${PROXY_PORT}"
+        if [ -n "$SS_OBFS" ]; then
+            PROXY_URL="${PROXY_URL}/?obfs=${SS_OBFS}"
+            if [ -n "$SS_OBFS_HOST" ]; then
+                PROXY_URL="${PROXY_URL};obfs-host=${SS_OBFS_HOST}"
+            fi
+        fi
+        ;;
+    ssh)
+        # SSH: ssh://user:pass@host:port or ssh://host:port?privateKeyFile=xxx
+        PROXY_URL="ssh://"
+        if [ -n "$AUTH_USER" ] && [ -n "$AUTH_PASS" ]; then
+            PROXY_URL="${PROXY_URL}${AUTH_USER}:${AUTH_PASS}@"
+        fi
+        PROXY_URL="${PROXY_URL}${PROXY_ADDR}:${PROXY_PORT}"
+        if [ -n "$SSH_KEY" ]; then
+            PROXY_URL="${PROXY_URL}?privateKeyFile=${SSH_KEY}"
+        fi
+        ;;
+    *)
+        log_error "Unknown proxy type: $PROXY_TYPE"
+        exit 1
+        ;;
 esac
-
-if [ -n "$AUTH_USER" ] && [ -n "$AUTH_PASS" ]; then
-    PROXY_URL="${PROXY_URL}${AUTH_USER}:${AUTH_PASS}@"
-fi
-PROXY_URL="${PROXY_URL}${PROXY_ADDR}:${PROXY_PORT}"
 
 log_separator "BEGIN SETUP"
 log_info "Interface: $IFACE"
@@ -152,7 +197,7 @@ fi
 log_info "Starting tun2socks (device=$IFACE, loglevel: ${LOGLEVEL})..."
 
 # Build tun2socks command with proper quoting (no stored-in-variable expansion)
-if [ "$PROXY_TYPE" = "socks5" ] || [ "$PROXY_TYPE" = "socks5tls" ]; then
+if [ "$PROXY_TYPE" = "socks5" ] || [ "$PROXY_TYPE" = "socks5tls" ] || [ "$PROXY_TYPE" = "ss" ]; then
     # SOCKS5: add UDP timeout for UDP relay support
     log_debug "Using UDP timeout (300s) for SOCKS5 proxy"
     "$TUN2SOCKS" -device "$IFACE" -proxy "$PROXY_URL" -loglevel "$LOGLEVEL" \
@@ -227,6 +272,7 @@ TUN_PEER="${TUN_PEER}"
 TUN_MTU="${TUN_MTU}"
 PROXY_IFACE="${PROXY_IFACE}"
 PID="${T2S_PID}"
+STARTED_AT="$(date +%s)"
 EOF
 chmod 600 "$CONFFILE"
 chown root:wheel "$CONFFILE"

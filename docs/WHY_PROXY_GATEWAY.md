@@ -478,14 +478,18 @@ firewall rules) rather than leaking to the direct WAN.
 | Proxy-as-gateway | Yes | No | Yes | No (redirect only) | No |
 | Multiple connections | Unlimited | One | One per setup | One per setup | Per-app |
 | Auto TUN + gateway | Yes | No | Manual | No | N/A |
-| Health monitoring | HTTP-based | No | No | No | No |
+| Health monitoring | Periodic HTTP + history | No | No | No | No |
+| Backup proxy failover | Built-in (auto switch/failback) | No | No | No | No |
+| Gateway force-down | Auto on failure | No | No | No | No |
+| Speed test | On-demand + scheduled | No | No | No | No |
+| Traffic stats + uptime | Yes | No | No | No | No |
 | Gateway groups (failover) | Yes | No | No | No | No |
 | TCP + UDP support | Yes (SOCKS5) | TCP only (until 2024 fix) | Yes | TCP only | App-dependent |
 | Start on boot | Toggle in GUI | Yes | Custom syshook | Custom init script | N/A |
 | Survives upgrades | `git pull && make install` | Package manager | Redo manually | Redo manually | N/A |
 | Transparent to devices | Yes | No | Yes | Partially | No |
 | SOCKS5 + HTTP proxy | Both | Shadowsocks only | Both | Both | App-dependent |
-| Diagnostics page | Yes (logs, status, health) | No | No | No | N/A |
+| Diagnostics page | Yes (logs, status, health, speed) | No | No | No | N/A |
 | Credential security | Env vars, 0600 perms | Config file | Varies | Config file | Stored per-app |
 | Works on OPNsense | Yes | Yes | Yes (manual) | No (Linux only) | N/A |
 | Works on pfSense | No | No | Partially (manual) | No | N/A |

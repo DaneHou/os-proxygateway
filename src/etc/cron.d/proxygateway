@@ -1,3 +1,6 @@
 # Proxy Gateway watchdog — restart crashed tun2socks connections
 # Runs every minute; the script itself checks if watchdog is enabled
 * * * * * root /usr/local/sbin/configctl proxygateway watchdog 2>/dev/null || true
+# Proxy Gateway speed test — measure throughput through each proxy
+# Runs every 5 minutes; the script self-gates based on configured interval
+*/5 * * * * root /usr/local/sbin/configctl proxygateway speedtestcron 2>/dev/null || true
