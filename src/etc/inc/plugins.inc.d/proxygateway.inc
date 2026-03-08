@@ -369,7 +369,6 @@ function proxygateway_generate_desired($mdl = null)
             'gatewayPriority'   => (string)$conn->gatewayPriority,
             'logLevel'          => (string)$mdl->general->logLevel,
             'speedTestUrl'      => (string)$conn->speedTestUrl,
-            'speedTestUrlDomestic' => (string)$conn->speedTestUrlDomestic,
             'backupEnabled'       => (string)$conn->backupEnabled,
             'backupProxyType'     => (string)$conn->backupProxyType,
             'backupProxyServer'   => (string)$conn->backupProxyServer,
