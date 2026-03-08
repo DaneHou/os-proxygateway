@@ -418,9 +418,8 @@ class DiagnosticsController extends ApiControllerBase
             }
 
             $backend = new \OPNsense\Core\Backend();
-            // speedtest.sh args: <name> [test_url] [size_bytes] [timeout] [test_type]
-            // Pass empty strings for url/size/timeout to use defaults.
-            $response = trim($backend->configdRun("proxygateway speedtest {$name} \"\" \"\" \"\" {$type}"));
+            // speedtest.sh args: <name> <test_type>
+            $response = trim($backend->configdRun("proxygateway speedtest {$name} {$type}"));
 
             $result = [
                 'status' => 'ok',

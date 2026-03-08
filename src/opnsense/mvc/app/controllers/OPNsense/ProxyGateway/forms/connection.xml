@@ -161,13 +161,13 @@
         <id>connection.speedTestUrl</id>
         <label>International Test URL</label>
         <type>text</type>
-        <help>Custom URL for international speed tests. Must be a direct-download URL. Leave empty to use default (Cloudflare speed test).</help>
+        <help>Direct-download URL for international speed tests. The URL must return a binary file (not HTML). Examples: https://speed.cloudflare.com/__down?bytes=10000000 (10MB), http://speedtest.tele2.net/10MB.zip, https://proof.ovh.net/files/10Mb.dat — Default: Cloudflare 10MB download.</help>
     </field>
     <field>
         <id>connection.speedTestUrlDomestic</id>
         <label>Domestic Test URL</label>
         <type>text</type>
-        <help>Custom URL for domestic (China) speed tests. Must be a direct-download URL. Leave empty to use default (USTC mirror).</help>
+        <help>Direct-download URL for domestic (China) speed tests. The URL must return a binary file (not HTML). Examples: http://mirrors.ustc.edu.cn/ubuntu-releases/ls-lR.gz, http://mirrors.aliyun.com/ubuntu-releases/ls-lR.gz, http://mirrors.tuna.tsinghua.edu.cn/ubuntu-releases/ls-lR.gz — Default: USTC mirror (~8MB).</help>
     </field>
     <field>
         <type>header</type>

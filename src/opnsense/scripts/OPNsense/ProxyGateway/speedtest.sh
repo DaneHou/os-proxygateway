@@ -20,13 +20,13 @@ DEFAULT_URL_INTL="https://speed.cloudflare.com/__down?bytes=10000000"
 DEFAULT_URL_DOMESTIC="http://mirrors.ustc.edu.cn/ubuntu-releases/ls-lR.gz"
 
 NAME="$1"
-TEST_URL="${2:-}"
+TEST_TYPE="${2:-international}"
 SIZE_BYTES="${3:-10000000}"
 TIMEOUT="${4:-60}"
-TEST_TYPE="${5:-international}"
+TEST_URL=""
 
 if [ -z "$NAME" ]; then
-    echo "Usage: $0 <name> [test_url] [size_bytes] [timeout] [test_type]"
+    echo "Usage: $0 <name> [test_type] [size_bytes] [timeout]"
     exit 1
 fi
 
