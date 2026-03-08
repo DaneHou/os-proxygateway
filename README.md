@@ -25,9 +25,14 @@ LAN Device --> OPNsense Firewall Rule --> pgw_<name> (TUN) --> tun2socks --> Pro
 - **Multiple proxy connections** with SOCKS5, SOCKS5+TLS, HTTP, and HTTPS support
 - **Auto gateway creation** with `fargw=1` for point-to-point TUN interfaces
 - **Transparent routing** via standard OPNsense firewall rules
-- **Health monitoring** with HTTP-based connectivity checks
+- **Health monitoring** with periodic HTTP-based connectivity checks and history
+- **Backup proxy failover** — automatic switch to backup proxy on failure, auto-failback when primary recovers
+- **Gateway force-down** — mark gateway offline on consecutive health failures
+- **Speed test** — on-demand and scheduled bandwidth testing through each proxy
+- **Traffic stats & uptime** — real-time per-connection traffic counters and uptime tracking
 - **Kill switch** to drop traffic if the tunnel goes down
 - **Gateway groups** for failover and load balancing
+- **Diagnostics dashboard** with connection status, health history, speed test results, and logs
 - **Web UI** integrated into OPNsense under Services
 
 ## Installation
@@ -52,6 +57,8 @@ Then go to **Services > Proxy Gateway > Connections**.
 4. **Apply again** — the plugin auto-configures the IP and gateway
 5. **Create a firewall rule** — route a source IP/subnet through `PROXYGW_<NAME>`
 6. **Add outbound NAT** — Firewall > NAT > Outbound, add a rule for the pgw interface to WAN
+
+Optional: configure a **backup proxy** on the connection for automatic failover.
 
 ## Updating
 
@@ -86,6 +93,7 @@ make uninstall
 - Userland tunneling limits throughput to ~200 Mbps per connection
 - HTTP CONNECT proxies are TCP-only (use SOCKS5 for UDP)
 - IPv6 not supported
+- Backup proxy must share the same `proxyInterface` as the primary
 
 ## License
 
