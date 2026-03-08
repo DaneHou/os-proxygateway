@@ -9,8 +9,73 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 RUNDIR = "/var/run/proxygateway"
+
+
+def get_traffic_stats(iface):
+    """Get traffic statistics for an interface using netstat."""
+    stats = {
+        "traffic_in": "0",
+        "traffic_out": "0",
+        "packets_in": "0",
+        "packets_out": "0",
+    }
+
+    # Try JSON output first (FreeBSD --libxo json)
+    try:
+        result = subprocess.run(
+            ["/usr/bin/netstat", "-I", iface, "-b", "--libxo", "json"],
+            capture_output=True, text=True, timeout=3
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            data = json.loads(result.stdout)
+            # Navigate the libxo JSON structure
+            iface_list = data.get("statistics", {}).get("interface", [])
+            for entry in iface_list:
+                if entry.get("name") == iface:
+                    stats["traffic_in"] = str(entry.get("received-bytes", 0))
+                    stats["traffic_out"] = str(entry.get("sent-bytes", 0))
+                    stats["packets_in"] = str(entry.get("received-packets", 0))
+                    stats["packets_out"] = str(entry.get("sent-packets", 0))
+                    return stats
+    except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError,
+            KeyError, ValueError):
+        pass
+
+    # Fallback: parse text output of netstat -I <iface> -b
+    try:
+        result = subprocess.run(
+            ["/usr/bin/netstat", "-I", iface, "-b"],
+            capture_output=True, text=True, timeout=3
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            lines = result.stdout.strip().split("\n")
+            if len(lines) >= 2:
+                # Header line tells us column positions; data is on subsequent lines
+                # Typical columns: Name Mtu Network Address Ipkts Ierrs Ibytes
+                #                   Opkts Oerrs Obytes Coll
+                header = lines[0].split()
+                for line in lines[1:]:
+                    fields = line.split()
+                    if len(fields) >= len(header) and fields[0] == iface:
+                        try:
+                            ipkts_idx = header.index("Ipkts")
+                            ibytes_idx = header.index("Ibytes")
+                            opkts_idx = header.index("Opkts")
+                            obytes_idx = header.index("Obytes")
+                            stats["packets_in"] = fields[ipkts_idx]
+                            stats["traffic_in"] = fields[ibytes_idx]
+                            stats["packets_out"] = fields[opkts_idx]
+                            stats["traffic_out"] = fields[obytes_idx]
+                        except (ValueError, IndexError):
+                            pass
+                        break
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    return stats
 
 
 def get_status():
@@ -86,6 +151,23 @@ def get_status():
         else:
             status = "up"
 
+        # Get traffic statistics for the interface
+        traffic = get_traffic_stats(iface) if iface_exists else {
+            "traffic_in": "0", "traffic_out": "0",
+            "packets_in": "0", "packets_out": "0",
+        }
+
+        # Compute uptime from STARTED_AT
+        started_at = config.get("STARTED_AT", "")
+        uptime_seconds = 0
+        if started_at:
+            try:
+                uptime_seconds = int(time.time()) - int(started_at)
+                if uptime_seconds < 0:
+                    uptime_seconds = 0
+            except (ValueError, TypeError):
+                uptime_seconds = 0
+
         conn_status = {
             "name": name,
             "interface": iface,
@@ -99,7 +181,30 @@ def get_status():
             "interface_exists": iface_exists,
             "status": status,
             "health": health,
+            "traffic_in": traffic["traffic_in"],
+            "traffic_out": traffic["traffic_out"],
+            "packets_in": traffic["packets_in"],
+            "packets_out": traffic["packets_out"],
+            "started_at": started_at,
+            "uptime_seconds": uptime_seconds,
         }
+
+        # Read failover state
+        failover_file = os.path.join(RUNDIR, f"{name}.failover")
+        failover = {}
+        if os.path.exists(failover_file):
+            try:
+                with open(failover_file) as f:
+                    failover = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                pass
+
+        conn_status["active_proxy"] = failover.get("active_proxy", "primary")
+        conn_status["consecutive_failures"] = failover.get("consecutive_failures", 0)
+        conn_status["switch_count"] = failover.get("switch_count", 0)
+        conn_status["backup_enabled"] = config.get("BACKUP_ENABLED", "0") == "1"
+        conn_status["gateway_forced_down"] = False  # TODO: could read from config.xml but expensive
+
         connections.append(conn_status)
 
     return {"connections": connections}

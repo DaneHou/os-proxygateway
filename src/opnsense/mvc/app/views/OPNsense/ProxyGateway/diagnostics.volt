@@ -73,6 +73,34 @@
             });
         }
 
+        // --- Helper: format bytes ---
+        function formatBytes(bytes) {
+            if (!bytes || bytes === '0') return '0 B';
+            bytes = parseInt(bytes);
+            if (isNaN(bytes)) return '-';
+            var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            var i = 0;
+            while (bytes >= 1024 && i < units.length - 1) {
+                bytes /= 1024;
+                i++;
+            }
+            return bytes.toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
+        }
+
+        // --- Helper: format uptime ---
+        function formatUptime(seconds) {
+            if (!seconds || seconds <= 0) return '-';
+            seconds = parseInt(seconds);
+            var d = Math.floor(seconds / 86400);
+            var h = Math.floor((seconds % 86400) / 3600);
+            var m = Math.floor((seconds % 3600) / 60);
+            var parts = [];
+            if (d > 0) parts.push(d + 'd');
+            if (h > 0) parts.push(h + 'h');
+            parts.push(m + 'm');
+            return parts.join(' ');
+        }
+
         // --- Connection Status ---
         function refreshStatus() {
             ajaxGet('/api/proxygateway/diagnostics/getStatus', {}, function(data, status) {
@@ -113,9 +141,9 @@
                             statusText = 'Not Running';
                         }
 
-                        var latency = '-';
+                        var latencyText = '-';
                         if (conn.health && conn.health.latency_ms && conn.health.latency_ms !== '-1') {
-                            latency = conn.health.latency_ms + ' ms';
+                            latencyText = conn.health.latency_ms + ' ms';
                         }
 
                         var tunnel = (conn.tun_local && conn.tun_local !== '-')
@@ -125,10 +153,35 @@
                         var row = $('<tr>');
                         row.append($('<td>').text(conn.name));
                         row.append($('<td>').html($('<code>').text(conn.interface)));
-                        row.append($('<td>').text(conn.proxy_type.toUpperCase() + '://' + conn.proxy_addr + ':' + conn.proxy_port));
+                        var proxyCell = $('<td>');
+                        var proxyText = conn.proxy_type.toUpperCase() + '://' + conn.proxy_addr + ':' + conn.proxy_port;
+                        proxyCell.text(proxyText);
+                        if (conn.active_proxy === 'backup') {
+                            proxyCell.append(' ');
+                            proxyCell.append($('<span class="label label-warning">').text('BACKUP'));
+                        }
+                        row.append(proxyCell);
                         row.append($('<td>').html(statusIcon + ' ' + statusText));
-                        row.append($('<td>').text(latency));
+                        var latencyCell = $('<td>');
+                        latencyCell.text(latencyText + ' ');
+                        // Add health history button for active connections
+                        if (conn.status === 'up' || conn.status === 'degraded') {
+                            latencyCell.append(
+                                $('<button class="btn btn-xs btn-default btn-health-history">').attr('data-name', conn.name)
+                                    .html('<span class="fa fa-fw fa-history"></span>')
+                                    .attr('title', 'Health History')
+                            );
+                        }
+                        row.append(latencyCell);
                         row.append($('<td>').text(tunnel));
+
+                        var trafficIn = formatBytes(conn.traffic_in);
+                        var trafficOut = formatBytes(conn.traffic_out);
+                        row.append($('<td>').text(trafficIn + ' / ' + trafficOut));
+
+                        var uptime = formatUptime(conn.uptime_seconds);
+                        row.append($('<td>').text(uptime));
+
                         row.append($('<td>').text(conn.pid || '-'));
 
                         var actionsCell = $('<td>');
@@ -145,7 +198,7 @@
                         tbody.append(row);
                     });
                 } else {
-                    tbody.append('<tr><td colspan="8" class="text-center text-muted">{{ lang._("No connections configured. Add connections in the Connections page.") }}</td></tr>');
+                    tbody.append('<tr><td colspan="10" class="text-center text-muted">{{ lang._("No connections configured. Add connections in the Connections page.") }}</td></tr>');
                 }
             });
         }
@@ -166,6 +219,37 @@
                     });
                 }
                 refreshStatus();
+            });
+        });
+
+        // Health history button
+        $(document).on('click', '.btn-health-history', function() {
+            var name = $(this).data('name');
+            ajaxGet('/api/proxygateway/diagnostics/getHealthHistory', {name: name, limit: 50}, function(data, status) {
+                if (!data || !data.history) return;
+                var html = '<table class="table table-condensed table-striped"><thead><tr>';
+                html += '<th>Time</th><th>Status</th><th>Latency</th><th>HTTP</th>';
+                html += '</tr></thead><tbody>';
+                // Show most recent first
+                var history = data.history.reverse();
+                $.each(history, function(i, entry) {
+                    var d = new Date(entry.timestamp * 1000);
+                    var statusIcon = entry.status === 'up'
+                        ? '<span class="fa fa-circle text-success"></span>'
+                        : '<span class="fa fa-circle text-danger"></span>';
+                    html += '<tr>';
+                    html += '<td>' + d.toLocaleString() + '</td>';
+                    html += '<td>' + statusIcon + ' ' + entry.status + '</td>';
+                    html += '<td>' + (entry.latency_ms > 0 ? entry.latency_ms + ' ms' : '-') + '</td>';
+                    html += '<td>' + (entry.http_code || '-') + '</td>';
+                    html += '</tr>';
+                });
+                html += '</tbody></table>';
+                BootstrapDialog.show({
+                    title: 'Health History: ' + name,
+                    message: html,
+                    size: BootstrapDialog.SIZE_WIDE
+                });
             });
         });
 
@@ -250,15 +334,122 @@
         });
         $('#btn-refresh-logs').click(refreshLogs);
 
+        // --- Speed Test Results ---
+        function refreshSpeedTests() {
+            ajaxGet('/api/proxygateway/diagnostics/getSpeedTestResults', {}, function(data, status) {
+                var tbody = $('#speedtest-table tbody');
+                tbody.empty();
+
+                if (!data || !data.data || data.data.length === 0) {
+                    tbody.append('<tr><td colspan="6" class="text-center text-muted">{{ lang._("No speed test results. Enable speed tests in General Settings and apply.") }}</td></tr>');
+                    return;
+                }
+
+                $.each(data.data, function(idx, item) {
+                    var row = $('<tr>');
+                    row.append($('<td>').text(item.name));
+
+                    // International speed
+                    row.append($('<td>').html(formatSpeedCell(item.international)));
+
+                    // Domestic speed
+                    row.append($('<td>').html(formatSpeedCell(item.domestic)));
+
+                    // Last tested
+                    var lastTested = '-';
+                    var ts = null;
+                    if (item.international && item.international.timestamp) {
+                        ts = item.international.timestamp;
+                    }
+                    if (item.domestic && item.domestic.timestamp) {
+                        var dts = item.domestic.timestamp;
+                        if (!ts || parseInt(dts) > parseInt(ts)) {
+                            ts = dts;
+                        }
+                    }
+                    if (ts) {
+                        var d = new Date(parseInt(ts) * 1000);
+                        lastTested = d.toLocaleTimeString();
+                    }
+                    row.append($('<td>').text(lastTested));
+
+                    // Actions
+                    var actionsCell = $('<td>');
+                    actionsCell.append(
+                        $('<button class="btn btn-xs btn-default btn-speedtest">').attr('data-name', item.name).attr('data-type', 'international')
+                            .html('<span class="fa fa-fw fa-globe"></span> Intl')
+                    );
+                    actionsCell.append(' ');
+                    actionsCell.append(
+                        $('<button class="btn btn-xs btn-default btn-speedtest">').attr('data-name', item.name).attr('data-type', 'domestic')
+                            .html('<span class="fa fa-fw fa-home"></span> Dom')
+                    );
+                    row.append(actionsCell);
+
+                    tbody.append(row);
+                });
+            });
+        }
+
+        function formatSpeedCell(result) {
+            if (!result) {
+                return '<span class="text-muted">-</span>';
+            }
+            if (result.status === 'error') {
+                return '<span class="text-danger"><span class="fa fa-fw fa-times-circle"></span> Error</span>';
+            }
+            var mbps = parseFloat(result.speed_mbps || 0);
+            var colorClass = 'text-danger';
+            if (mbps >= 10) {
+                colorClass = 'text-success';
+            } else if (mbps >= 1) {
+                colorClass = 'text-warning';
+            }
+            var label = mbps.toFixed(2) + ' Mbps';
+            if (result.status === 'timeout') {
+                label += ' (partial)';
+            }
+            return '<span class="' + colorClass + '">' + label + '</span>';
+        }
+
+        // Run speed test button
+        $(document).on('click', '.btn-speedtest', function() {
+            var name = $(this).data('name');
+            var type = $(this).data('type');
+            var btn = $(this);
+            btn.prop('disabled', true).html('<span class="fa fa-fw fa-spinner fa-spin"></span>');
+
+            ajaxCall('/api/proxygateway/diagnostics/runSpeedTest', {name: name, type: type}, function(data, status) {
+                btn.prop('disabled', false);
+                if (type === 'international') {
+                    btn.html('<span class="fa fa-fw fa-globe"></span> Intl');
+                } else {
+                    btn.html('<span class="fa fa-fw fa-home"></span> Dom');
+                }
+                if (data.result) {
+                    BootstrapDialog.show({
+                        title: 'Speed Test: ' + name + ' (' + type + ')',
+                        message: '<pre>' + $('<div/>').text(data.result).html() + '</pre>',
+                        type: data.result.indexOf('OK') >= 0 ? BootstrapDialog.TYPE_SUCCESS : BootstrapDialog.TYPE_DANGER
+                    });
+                }
+                refreshSpeedTests();
+            });
+        });
+
         // Auto-refresh every 10 seconds
         setInterval(function() {
             refreshStatus();
             refreshLogs();
         }, 10000);
 
+        // Refresh speed tests every 30 seconds
+        setInterval(refreshSpeedTests, 30000);
+
         // Initial load
         refreshSystemChecks();
         refreshStatus();
+        refreshSpeedTests();
         populateLogFilter();
         refreshLogs();
     });
@@ -309,12 +500,39 @@
                 <th>{{ lang._('Status') }}</th>
                 <th>{{ lang._('Latency') }}</th>
                 <th>{{ lang._('Tunnel') }}</th>
+                <th>{{ lang._('Traffic In/Out') }}</th>
+                <th>{{ lang._('Uptime') }}</th>
                 <th>{{ lang._('PID') }}</th>
                 <th>{{ lang._('Actions') }}</th>
             </tr>
         </thead>
         <tbody>
-            <tr><td colspan="8" class="text-center text-muted">{{ lang._('Loading...') }}</td></tr>
+            <tr><td colspan="10" class="text-center text-muted">{{ lang._('Loading...') }}</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Speed Test Results -->
+<div class="content-box" style="margin-top: 1em;">
+    <div class="content-box-header">
+        <h3>{{ lang._('Speed Test Results') }}
+            <button id="btn-refresh-speedtest" class="btn btn-xs btn-default pull-right" onclick="refreshSpeedTests && refreshSpeedTests()">
+                <span class="fa fa-fw fa-refresh"></span> {{ lang._('Refresh') }}
+            </button>
+        </h3>
+    </div>
+    <table id="speedtest-table" class="table table-condensed table-hover table-striped">
+        <thead>
+            <tr>
+                <th>{{ lang._('Connection') }}</th>
+                <th>{{ lang._('International Speed') }}</th>
+                <th>{{ lang._('Domestic Speed') }}</th>
+                <th>{{ lang._('Last Tested') }}</th>
+                <th>{{ lang._('Actions') }}</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr><td colspan="5" class="text-center text-muted">{{ lang._('Loading...') }}</td></tr>
         </tbody>
     </table>
 </div>

@@ -89,24 +89,41 @@ fi
 # --- Connectivity probe through the proxy server ---
 # Use PROXY_URL from .conf (includes auth credentials if configured).
 # For SOCKS5, switch to socks5h:// so curl asks the proxy to resolve DNS.
+# For SS and SSH, curl doesn't support these proxy protocols directly.
+# Instead, route traffic through the TUN interface to test end-to-end.
+USE_INTERFACE=""
 case "$PROXY_TYPE" in
     socks5|socks5tls) CURL_PROXY="socks5h${PROXY_URL#socks5}" ;;
     http|https)       CURL_PROXY="$PROXY_URL" ;;
+    ss|ssh)           CURL_PROXY=""; USE_INTERFACE="$IFACE" ;;
     *)                CURL_PROXY="socks5h${PROXY_URL#socks5}" ;;
 esac
 
 # Mask credentials in log output
-CURL_PROXY_LOG=$(echo "$CURL_PROXY" | sed 's|://[^@]*@|://***@|')
+if [ -n "$CURL_PROXY" ]; then
+    CURL_PROXY_LOG=$(echo "$CURL_PROXY" | sed 's|://[^@]*@|://***@|')
+else
+    CURL_PROXY_LOG="interface:${USE_INTERFACE}"
+fi
 
 log_debug "Probing ${TARGET} via proxy ${CURL_PROXY_LOG}..."
 START_MS=$(date +%s%N 2>/dev/null || echo "0")
 
 CURL_ERR_FILE="${RUNDIR}/${NAME}.curl_err"
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-    --proxy "$CURL_PROXY" \
-    --connect-timeout "$TIMEOUT" \
-    --max-time "$TIMEOUT" \
-    "$TARGET" 2>"$CURL_ERR_FILE")
+if [ -n "$CURL_PROXY" ]; then
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+        --proxy "$CURL_PROXY" \
+        --connect-timeout "$TIMEOUT" \
+        --max-time "$TIMEOUT" \
+        "$TARGET" 2>"$CURL_ERR_FILE")
+else
+    # SS/SSH: test through the TUN interface directly
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+        --interface "$USE_INTERFACE" \
+        --connect-timeout "$TIMEOUT" \
+        --max-time "$TIMEOUT" \
+        "$TARGET" 2>"$CURL_ERR_FILE")
+fi
 CURL_EXIT=$?
 
 END_MS=$(date +%s%N 2>/dev/null || echo "0")
@@ -131,6 +148,8 @@ probe=${PROBE_DETAIL}
 latency_ms=${LATENCY_MS}
 timestamp=$(date +%s)
 EOF
+    # Append to health history log (JSON-line format)
+    echo "{\"timestamp\":$(date +%s),\"name\":\"${NAME}\",\"status\":\"up\",\"latency_ms\":${LATENCY_MS},\"http_code\":\"${HTTP_CODE}\"}" >> "${LOGDIR}/${NAME}_health.log"
     exit 0
 else
     CURL_ERR=$(head -1 "$CURL_ERR_FILE" 2>/dev/null)
@@ -144,5 +163,7 @@ curl_exit=${CURL_EXIT}
 curl_err=${CURL_ERR}
 timestamp=$(date +%s)
 EOF
+    # Append to health history log (JSON-line format)
+    echo "{\"timestamp\":$(date +%s),\"name\":\"${NAME}\",\"status\":\"down\",\"latency_ms\":${LATENCY_MS},\"http_code\":\"${HTTP_CODE}\",\"curl_exit\":${CURL_EXIT}}" >> "${LOGDIR}/${NAME}_health.log"
     exit 1
 fi

@@ -29,6 +29,10 @@ use OPNsense\Base\ApiControllerBase;
  *   GET  /api/proxygateway/diagnostics/getStatus
  *   POST /api/proxygateway/diagnostics/testConnection
  *   GET  /api/proxygateway/diagnostics/getLogs
+ *   GET  /api/proxygateway/diagnostics/getSpeedTestResults
+ *   GET  /api/proxygateway/diagnostics/getSpeedTestHistory
+ *   POST /api/proxygateway/diagnostics/runSpeedTest
+ *   GET  /api/proxygateway/diagnostics/getHealthHistory
  */
 class DiagnosticsController extends ApiControllerBase
 {
@@ -290,5 +294,161 @@ class DiagnosticsController extends ApiControllerBase
         ];
 
         return ['status' => 'ok', 'checks' => $checks];
+    }
+
+    /**
+     * Get latest speed test results for all connections.
+     * Reads .speedtest and .speedtest_domestic files from /var/run/proxygateway/.
+     * @return array speed test results per connection
+     */
+    public function getSpeedTestResultsAction()
+    {
+        $runDir = '/var/run/proxygateway';
+        $results = [];
+
+        $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
+        foreach ($mdl->connections->connection->iterateItems() as $uuid => $conn) {
+            if (empty((string)$conn->enabled)) {
+                continue;
+            }
+
+            $name = (string)$conn->name;
+            $entry = ['name' => $name, 'international' => null, 'domestic' => null];
+
+            // Read international result
+            $intlFile = "{$runDir}/{$name}.speedtest";
+            if (file_exists($intlFile)) {
+                $entry['international'] = $this->parseSpeedTestFile($intlFile);
+            }
+
+            // Read domestic result
+            $domFile = "{$runDir}/{$name}.speedtest_domestic";
+            if (file_exists($domFile)) {
+                $entry['domestic'] = $this->parseSpeedTestFile($domFile);
+            }
+
+            $results[] = $entry;
+        }
+
+        return ['status' => 'ok', 'data' => $results];
+    }
+
+    /**
+     * Get speed test history for a specific connection.
+     * @return array JSON lines from the history log
+     */
+    public function getSpeedTestHistoryAction()
+    {
+        $name = $this->request->get('name', null, '');
+        if (empty($name) || !preg_match('/^[a-zA-Z0-9_]{1,16}$/', $name)) {
+            return ['status' => 'failed', 'message' => 'Valid connection name is required'];
+        }
+
+        $limit = (int)$this->request->get('limit', null, 100);
+        $limit = min(max($limit, 10), 500);
+
+        $logFile = "/var/log/proxygateway/{$name}_speedtest.log";
+        $history = [];
+
+        if (file_exists($logFile)) {
+            $cmd = sprintf('tail -n %d %s 2>/dev/null', $limit, escapeshellarg($logFile));
+            $output = [];
+            exec($cmd, $output);
+            foreach ($output as $line) {
+                $decoded = json_decode($line, true);
+                if ($decoded !== null) {
+                    $history[] = $decoded;
+                }
+            }
+        }
+
+        return ['status' => 'ok', 'name' => $name, 'history' => $history];
+    }
+
+    /**
+     * Get health check history for a specific connection.
+     * @return array JSON lines from the health history log
+     */
+    public function getHealthHistoryAction()
+    {
+        $name = $this->request->get('name', null, '');
+        if (empty($name) || !preg_match('/^[a-zA-Z0-9_]{1,16}$/', $name)) {
+            return ['status' => 'failed', 'message' => 'Valid connection name is required'];
+        }
+
+        $limit = (int)$this->request->get('limit', null, 100);
+        $limit = min(max($limit, 10), 500);
+
+        $logFile = "/var/log/proxygateway/{$name}_health.log";
+        $history = [];
+
+        if (file_exists($logFile)) {
+            $cmd = sprintf('tail -n %d %s 2>/dev/null', $limit, escapeshellarg($logFile));
+            $output = [];
+            exec($cmd, $output);
+            foreach ($output as $line) {
+                $decoded = json_decode($line, true);
+                if ($decoded !== null) {
+                    $history[] = $decoded;
+                }
+            }
+        }
+
+        return ['status' => 'ok', 'name' => $name, 'history' => $history];
+    }
+
+    /**
+     * Trigger a manual speed test for a specific connection.
+     * @return array test result
+     */
+    public function runSpeedTestAction()
+    {
+        $result = ['status' => 'failed'];
+
+        if ($this->request->isPost()) {
+            $name = $this->request->getPost('name');
+            $type = $this->request->getPost('type', null, 'international');
+
+            if (empty($name) || !preg_match('/^[a-zA-Z0-9_]{1,16}$/', $name)) {
+                return ['status' => 'failed', 'message' => 'Connection name is required'];
+            }
+
+            if (!in_array($type, ['international', 'domestic'])) {
+                $type = 'international';
+            }
+
+            $backend = new \OPNsense\Core\Backend();
+            // speedtest.sh args: <name> [test_url] [size_bytes] [timeout] [test_type]
+            // Pass empty strings for url/size/timeout to use defaults.
+            $response = trim($backend->configdRun("proxygateway speedtest {$name} \"\" \"\" \"\" {$type}"));
+
+            $result = [
+                'status' => 'ok',
+                'name'   => $name,
+                'type'   => $type,
+                'result' => $response,
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
+     * Parse a .speedtest key=value file into an associative array.
+     */
+    private function parseSpeedTestFile($path)
+    {
+        $data = [];
+        $lines = @file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if ($lines === false) {
+            return null;
+        }
+        foreach ($lines as $line) {
+            if (strpos($line, '=') !== false) {
+                list($key, $val) = explode('=', $line, 2);
+                $data[trim($key)] = trim($val);
+            }
+        }
+        return $data;
     }
 }
