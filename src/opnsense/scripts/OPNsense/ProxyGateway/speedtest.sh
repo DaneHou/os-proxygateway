@@ -19,12 +19,11 @@ LOGDIR="/var/log/proxygateway"
 DEFAULT_URL="http://speedtest.tele2.net/10MB.zip"
 
 NAME="$1"
-SIZE_BYTES="${2:-10000000}"
-TIMEOUT="${3:-60}"
+TIMEOUT="${2:-60}"
 TEST_URL=""
 
 if [ -z "$NAME" ]; then
-    echo "Usage: $0 <name> [size_bytes] [timeout]"
+    echo "Usage: $0 <name> [timeout]"
     exit 1
 fi
 

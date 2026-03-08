@@ -20,14 +20,8 @@ if [ -f "${RUNDIR}/speedtest.interval" ]; then
 fi
 INTERVAL_SECS=$((INTERVAL * 60))
 
-# Read configured test size
-SIZE_BYTES=10000000
-if [ -f "${RUNDIR}/speedtest.size" ]; then
-    SIZE_BYTES=$(cat "${RUNDIR}/speedtest.size")
-fi
-
-# Calculate timeout based on size (allow ~100KB/s minimum + 15s connect)
-TIMEOUT=$(echo "$SIZE_BYTES" | awk '{t = int($1 / 100000) + 15; if (t > 120) t = 120; print t}')
+# Fixed timeout — actual file size depends on the URL, not a config setting
+TIMEOUT=60
 
 # Read desired.json to get list of enabled connections
 DESIRED="${RUNDIR}/desired.json"
@@ -61,5 +55,5 @@ for NAME in $CONNECTIONS; do
         fi
     fi
 
-    /bin/sh "$SPEEDTEST_SCRIPT" "$NAME" "$SIZE_BYTES" "$TIMEOUT"
+    /bin/sh "$SPEEDTEST_SCRIPT" "$NAME" "$TIMEOUT"
 done

@@ -414,21 +414,15 @@ function proxygateway_generate_desired($mdl = null)
     if ((string)$mdl->general->speedTestEnabled === '1') {
         @file_put_contents($speedTestFlag, '1');
 
-        // Map OptionField values to numeric minutes/bytes
+        // Map OptionField values to numeric minutes
         $intervalMap = ['m5' => '5', 'm15' => '15', 'm30' => '30', 'm60' => '60'];
-        $sizeMap = ['s1m' => '1000000', 's5m' => '5000000', 's10m' => '10000000', 's25m' => '25000000'];
-
         $interval = (string)$mdl->general->speedTestInterval;
-        $size = (string)$mdl->general->speedTestSize;
 
         @file_put_contents('/var/run/proxygateway/speedtest.interval',
             $intervalMap[$interval] ?? '15');
-        @file_put_contents('/var/run/proxygateway/speedtest.size',
-            $sizeMap[$size] ?? '10000000');
     } else {
         @unlink($speedTestFlag);
         @unlink('/var/run/proxygateway/speedtest.interval');
-        @unlink('/var/run/proxygateway/speedtest.size');
     }
 
     // Manage auto force-down flag file
