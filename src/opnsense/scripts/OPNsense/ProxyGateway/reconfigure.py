@@ -161,10 +161,6 @@ def save_healthcheck_config(conn):
         if speed_url:
             f.write(f'SPEED_TEST_URL="{speed_url}"\n')
 
-        speed_url_domestic = conn.get("speedTestUrlDomestic", "")
-        if speed_url_domestic:
-            f.write(f'SPEED_TEST_URL_DOMESTIC="{speed_url_domestic}"\n')
-
         # Backup proxy config
         if conn.get("backupEnabled") == "1":
             f.write(f'BACKUP_ENABLED="1"\n')

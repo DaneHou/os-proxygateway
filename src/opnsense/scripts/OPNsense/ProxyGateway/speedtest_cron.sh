@@ -43,34 +43,23 @@ CONNECTIONS=$(cat "$DESIRED" | \
 
 NOW=$(date +%s)
 
-# Run speed test if result file is stale or missing
-run_if_stale() {
-    _resultfile="$1"
-    _name="$2"
-    _type="$3"
-
-    if [ -f "$_resultfile" ]; then
-        _last_ts=$(grep '^timestamp=' "$_resultfile" | head -1 | cut -d= -f2)
-        if [ -n "$_last_ts" ]; then
-            _age=$((NOW - _last_ts))
-            if [ "$_age" -lt "$INTERVAL_SECS" ]; then
-                return
-            fi
-        fi
-    fi
-
-    /bin/sh "$SPEEDTEST_SCRIPT" "$_name" "$_type" "$SIZE_BYTES" "$TIMEOUT"
-}
-
 for NAME in $CONNECTIONS; do
     # Check if this connection has a running process
     if [ ! -f "${RUNDIR}/${NAME}.pid" ]; then
         continue
     fi
 
-    # Test international if result is stale or missing
-    run_if_stale "${RUNDIR}/${NAME}.speedtest" "$NAME" "international"
+    # Skip if result is still fresh
+    RESULTFILE="${RUNDIR}/${NAME}.speedtest"
+    if [ -f "$RESULTFILE" ]; then
+        LAST_TS=$(grep '^timestamp=' "$RESULTFILE" | head -1 | cut -d= -f2)
+        if [ -n "$LAST_TS" ]; then
+            AGE=$((NOW - LAST_TS))
+            if [ "$AGE" -lt "$INTERVAL_SECS" ]; then
+                continue
+            fi
+        fi
+    fi
 
-    # Test domestic if result is stale or missing
-    run_if_stale "${RUNDIR}/${NAME}.speedtest_domestic" "$NAME" "domestic"
+    /bin/sh "$SPEEDTEST_SCRIPT" "$NAME" "$SIZE_BYTES" "$TIMEOUT"
 done
