@@ -38,6 +38,9 @@
                     },
                     "connectionStatus": function(column, row) {
                         if (row.connectionStatus === 'up') {
+                            if (row.activeProxy === 'backup') {
+                                return '<span class="fa fa-fw fa-plug text-warning" title="Connected (Backup)"></span> Backup';
+                            }
                             return '<span class="fa fa-fw fa-plug text-success" title="Connected"></span> Connected';
                         } else if (row.connectionStatus === 'down') {
                             return '<span class="fa fa-fw fa-plug text-danger" title="Down"></span> Down';
@@ -105,6 +108,72 @@
             }
         }
         $(document).on('change', '#connection\\.healthCheckEnabled', toggleHealthFields);
+
+        // Toggle backup proxy fields visibility
+        function toggleBackupFields() {
+            if ($('#connection\\.backupEnabled').is(':checked')) {
+                $('.backup_fields').closest('tr').show();
+                toggleBackupAuthFields();
+            } else {
+                $('.backup_fields').closest('tr').hide();
+                $('.backup_auth_fields').closest('tr').hide();
+            }
+        }
+        $(document).on('change', '#connection\\.backupEnabled', toggleBackupFields);
+
+        // Toggle backup auth fields visibility
+        function toggleBackupAuthFields() {
+            if ($('#connection\\.backupAuthEnabled').is(':checked')) {
+                $('.backup_auth_fields').closest('tr').show();
+            } else {
+                $('.backup_auth_fields').closest('tr').hide();
+            }
+        }
+        $(document).on('change', '#connection\\.backupAuthEnabled', toggleBackupAuthFields);
+
+        // Toggle Shadowsocks/SSH fields based on proxy type
+        function toggleProtocolFields() {
+            var proxyType = $('#connection\\.proxyType').val();
+            if (proxyType === 'ss') {
+                $('.ss_fields').closest('tr').show();
+                toggleSsObfsFields();
+            } else {
+                $('.ss_fields').closest('tr').hide();
+                $('.ss_obfs_fields').closest('tr').hide();
+            }
+            if (proxyType === 'ssh') {
+                $('.ssh_fields').closest('tr').show();
+            } else {
+                $('.ssh_fields').closest('tr').hide();
+            }
+        }
+        $(document).on('change', '#connection\\.proxyType', toggleProtocolFields);
+
+        function toggleSsObfsFields() {
+            var obfs = $('#connection\\.ssObfs').val();
+            if (obfs) {
+                $('.ss_obfs_fields').closest('tr').show();
+            } else {
+                $('.ss_obfs_fields').closest('tr').hide();
+            }
+        }
+        $(document).on('change', '#connection\\.ssObfs', toggleSsObfsFields);
+
+        // Toggle backup SS/SSH fields based on backup proxy type
+        function toggleBackupProtocolFields() {
+            var backupType = $('#connection\\.backupProxyType').val();
+            if (backupType === 'ss') {
+                $('.backup_ss_fields').closest('tr').show();
+            } else {
+                $('.backup_ss_fields').closest('tr').hide();
+            }
+            if (backupType === 'ssh') {
+                $('.backup_ssh_fields').closest('tr').show();
+            } else {
+                $('.backup_ssh_fields').closest('tr').hide();
+            }
+        }
+        $(document).on('change', '#connection\\.backupProxyType', toggleBackupProtocolFields);
     });
 </script>
 

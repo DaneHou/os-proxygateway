@@ -106,6 +106,22 @@ def run_setup(conn):
     if conn.get("logLevel"):
         cmd.extend(["--loglevel", conn["logLevel"]])
 
+    # Shadowsocks settings
+    if conn.get("proxyType") == "ss":
+        if conn.get("ssMethod"):
+            cmd.extend(["--ss-method", conn["ssMethod"]])
+        if conn.get("ssPassword"):
+            cmd.append("--ss-password-env")
+            env["SS_AUTH_PASS"] = conn.get("ssPassword", "")
+        if conn.get("ssObfs"):
+            cmd.extend(["--ss-obfs", conn["ssObfs"]])
+        if conn.get("ssObfsHost"):
+            cmd.extend(["--ss-obfs-host", conn["ssObfsHost"]])
+
+    # SSH settings
+    if conn.get("proxyType") == "ssh" and conn.get("sshKeyFile"):
+        cmd.extend(["--ssh-key", conn["sshKeyFile"]])
+
     log.info("Starting connection: %s", conn["name"])
     print(f"  Command: {' '.join(cmd)}")  # Safe to print now - no password in args
     result = subprocess.run(cmd, capture_output=True, text=True, env=env)
@@ -126,17 +142,41 @@ def run_setup(conn):
 
 
 def save_healthcheck_config(conn):
-    """Append health check settings to the connection's .conf file.
+    """Append health check and speed test settings to the connection's .conf file.
 
-    This makes the custom target available to healthcheck.sh regardless of
-    whether it's called from reconfigure.py or the Test button (via configd).
+    This makes the custom targets available to healthcheck.sh and speedtest.sh
+    regardless of whether they're called from reconfigure.py or configd.
     """
     name = conn["name"]
     conf_file = os.path.join(RUNDIR, f"{name}.conf")
-    target = conn.get("healthCheckTarget", "")
-    if os.path.isfile(conf_file) and target:
-        with open(conf_file, "a") as f:
+    if not os.path.isfile(conf_file):
+        return
+
+    with open(conf_file, "a") as f:
+        target = conn.get("healthCheckTarget", "")
+        if target:
             f.write(f'HEALTH_TARGET="{target}"\n')
+
+        speed_url = conn.get("speedTestUrl", "")
+        if speed_url:
+            f.write(f'SPEED_TEST_URL="{speed_url}"\n')
+
+        speed_url_domestic = conn.get("speedTestUrlDomestic", "")
+        if speed_url_domestic:
+            f.write(f'SPEED_TEST_URL_DOMESTIC="{speed_url_domestic}"\n')
+
+        # Backup proxy config
+        if conn.get("backupEnabled") == "1":
+            f.write(f'BACKUP_ENABLED="1"\n')
+            f.write(f'BACKUP_PROXY_TYPE="{conn.get("backupProxyType", "socks5")}"\n')
+            f.write(f'BACKUP_PROXY_SERVER="{conn.get("backupProxyServer", "")}"\n')
+            f.write(f'BACKUP_PROXY_PORT="{conn.get("backupProxyPort", "1080")}"\n')
+            if conn.get("backupAuthEnabled") == "1":
+                f.write(f'BACKUP_AUTH_ENABLED="1"\n')
+                f.write(f'BACKUP_AUTH_USER="{conn.get("backupAuthUser", "")}"\n')
+                f.write(f'BACKUP_AUTH_PASS="{conn.get("backupAuthPass", "")}"\n')
+            f.write(f'FAILOVER_THRESHOLD="{conn.get("failoverThreshold", "3")}"\n')
+            f.write(f'FAILBACK_ENABLED="{conn.get("failbackEnabled", "1")}"\n')
 
 
 def run_healthcheck(conn):
@@ -193,6 +233,18 @@ def connection_changed(desired, running_config):
     for desired_key, running_key in checks:
         if str(desired.get(desired_key, "")) != str(running_config.get(running_key, "")):
             return True
+
+    # Also check backup proxy changes
+    backup_checks = [
+        ("backupEnabled", "BACKUP_ENABLED"),
+        ("backupProxyType", "BACKUP_PROXY_TYPE"),
+        ("backupProxyServer", "BACKUP_PROXY_SERVER"),
+        ("backupProxyPort", "BACKUP_PROXY_PORT"),
+    ]
+    for desired_key, running_key in backup_checks:
+        if str(desired.get(desired_key, "")) != str(running_config.get(running_key, "")):
+            return True
+
     return False
 
 

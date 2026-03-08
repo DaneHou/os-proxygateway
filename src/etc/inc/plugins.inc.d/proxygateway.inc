@@ -214,6 +214,27 @@ function proxygateway_firewall(\OPNsense\Firewall\Plugin $fw)
             ]
         );
 
+        // Rule 1b: Anti-routing-loop for backup proxy server
+        if (!empty((string)$conn->backupEnabled) && !empty((string)$conn->backupProxyServer)) {
+            $backupServer = (string)$conn->backupProxyServer;
+            $backupPort = (string)$conn->backupProxyPort;
+            $fw->registerFilterRule(
+                1,
+                [
+                    'ipprotocol' => 'inet',
+                    'protocol'   => 'tcp',
+                    'from'       => '(self)',
+                    'to'         => $backupServer,
+                    'to_port'    => $backupPort,
+                    'direction'  => 'out',
+                    'quick'      => true,
+                    '#ref'       => "pgw_{$name}_antiloop_backup",
+                    'descr'      => "Proxy Gateway: anti-loop backup {$name}",
+                    'log'        => false,
+                ]
+            );
+        }
+
         // Rule 2: Allow traffic on the pgw_* TUN interface (if assigned)
         $intf_id = null;
         foreach (legacy_config_get_interfaces() as $id => $cfg) {
@@ -347,6 +368,26 @@ function proxygateway_generate_desired($mdl = null)
             'healthCheckTarget' => (string)$conn->healthCheckTarget,
             'gatewayPriority'   => (string)$conn->gatewayPriority,
             'logLevel'          => (string)$mdl->general->logLevel,
+            'speedTestUrl'      => (string)$conn->speedTestUrl,
+            'speedTestUrlDomestic' => (string)$conn->speedTestUrlDomestic,
+            'backupEnabled'       => (string)$conn->backupEnabled,
+            'backupProxyType'     => (string)$conn->backupProxyType,
+            'backupProxyServer'   => (string)$conn->backupProxyServer,
+            'backupProxyPort'     => (string)$conn->backupProxyPort,
+            'backupAuthEnabled'   => (string)$conn->backupAuthEnabled,
+            'backupAuthUser'      => (string)$conn->backupAuthUser,
+            'backupAuthPass'      => (string)$conn->backupAuthPass,
+            'failoverThreshold'   => (string)$conn->failoverThreshold,
+            'failbackEnabled'     => (string)$conn->failbackEnabled,
+            'autoForceDown'       => (string)$mdl->general->autoForceDown,
+            'ssMethod'            => (string)$conn->ssMethod,
+            'ssPassword'          => (string)$conn->ssPassword,
+            'ssObfs'              => (string)$conn->ssObfs,
+            'ssObfsHost'          => (string)$conn->ssObfsHost,
+            'sshKeyFile'          => (string)$conn->sshKeyFile,
+            'backupSsMethod'      => (string)$conn->backupSsMethod,
+            'backupSsPassword'    => (string)$conn->backupSsPassword,
+            'backupSshKeyFile'    => (string)$conn->backupSshKeyFile,
         ];
     }
 
@@ -367,6 +408,36 @@ function proxygateway_generate_desired($mdl = null)
         @file_put_contents($watchdogFlag, '1');
     } else {
         @unlink($watchdogFlag);
+    }
+
+    // Manage speed test flag files — speedtest_cron.sh checks these
+    $speedTestFlag = '/var/run/proxygateway/speedtest.enabled';
+    if ((string)$mdl->general->speedTestEnabled === '1') {
+        @file_put_contents($speedTestFlag, '1');
+
+        // Map OptionField values to numeric minutes/bytes
+        $intervalMap = ['m5' => '5', 'm15' => '15', 'm30' => '30', 'm60' => '60'];
+        $sizeMap = ['s1m' => '1000000', 's5m' => '5000000', 's10m' => '10000000', 's25m' => '25000000'];
+
+        $interval = (string)$mdl->general->speedTestInterval;
+        $size = (string)$mdl->general->speedTestSize;
+
+        @file_put_contents('/var/run/proxygateway/speedtest.interval',
+            $intervalMap[$interval] ?? '15');
+        @file_put_contents('/var/run/proxygateway/speedtest.size',
+            $sizeMap[$size] ?? '10000000');
+    } else {
+        @unlink($speedTestFlag);
+        @unlink('/var/run/proxygateway/speedtest.interval');
+        @unlink('/var/run/proxygateway/speedtest.size');
+    }
+
+    // Manage auto force-down flag file
+    $forceDownFlag = '/var/run/proxygateway/autoforcedown.enabled';
+    if ((string)$mdl->general->autoForceDown === '1') {
+        @file_put_contents($forceDownFlag, '1');
+    } else {
+        @unlink($forceDownFlag);
     }
 }
 
