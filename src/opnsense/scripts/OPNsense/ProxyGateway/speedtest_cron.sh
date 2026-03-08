@@ -59,7 +59,7 @@ run_if_stale() {
         fi
     fi
 
-    /bin/sh "$SPEEDTEST_SCRIPT" "$_name" "" "$SIZE_BYTES" "$TIMEOUT" "$_type"
+    /bin/sh "$SPEEDTEST_SCRIPT" "$_name" "$_type" "$SIZE_BYTES" "$TIMEOUT"
 }
 
 for NAME in $CONNECTIONS; do
