@@ -161,7 +161,7 @@
         <id>connection.speedTestUrl</id>
         <label>Test URL</label>
         <type>text</type>
-        <help>Direct-download URL for speed tests. The URL must return a binary file (not HTML). Examples: https://speed.cloudflare.com/__down?bytes=10000000 (10MB), http://speedtest.tele2.net/10MB.zip, http://mirrors.ustc.edu.cn/ubuntu-releases/ls-lR.gz — Default: Cloudflare 10MB download.</help>
+        <help>Direct-download URL for speed tests. Must return a binary file (not HTML). Examples: http://speedtest.tele2.net/10MB.zip, https://proof.ovh.net/files/10Mb.dat, http://mirrors.ustc.edu.cn/ubuntu-releases/ls-lR.gz — Default: Tele2 10MB download.</help>
     </field>
     <field>
         <type>header</type>

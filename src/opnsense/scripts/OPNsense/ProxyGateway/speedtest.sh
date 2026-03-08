@@ -15,8 +15,8 @@ LOGDIR="/var/log/proxygateway"
 # Source structured logging library
 . "${SCRIPT_DIR}/lib/logging.sh"
 
-# Default test URL
-DEFAULT_URL="https://speed.cloudflare.com/__down?bytes=10000000"
+# Default test URL (~10MB, no browser verification)
+DEFAULT_URL="http://speedtest.tele2.net/10MB.zip"
 
 NAME="$1"
 SIZE_BYTES="${2:-10000000}"
@@ -92,13 +92,6 @@ esac
 CURL_PROXY_LOG=$(echo "$CURL_PROXY" | sed 's|://[^@]*@|://***@|')
 
 log_info "Speed test starting: url=${TEST_URL} via ${CURL_PROXY_LOG}"
-
-# For Cloudflare speed test, override size in URL if configured
-case "$TEST_URL" in
-    *speed.cloudflare.com/__down*)
-        TEST_URL="https://speed.cloudflare.com/__down?bytes=${SIZE_BYTES}"
-        ;;
-esac
 
 # Run the download and capture metrics
 # %{speed_download} = average bytes/sec, %{size_download} = total bytes, %{time_total} = seconds
