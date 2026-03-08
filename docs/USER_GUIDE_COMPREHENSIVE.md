@@ -1,7 +1,7 @@
 # Comprehensive User Guide: OS Proxy Gateway
 
-**Version:** 1.0.2
-**Last Updated:** 2026-02-24
+**Version:** 0.4.0
+**Last Updated:** 2026-03-08
 **Target Audience:** OPNsense administrators
 
 ---
@@ -48,10 +48,16 @@ OS Proxy Gateway is an OPNsense plugin that converts remote SOCKS5 and HTTP/HTTP
 - Time-based routing (with schedules)
 
 ✅ **Comprehensive Monitoring**
-- Real-time connection status
-- Latency tracking
+- Real-time connection status with traffic stats and uptime
+- Periodic health checks with history (green/red dot indicators)
+- Speed testing (on-demand and scheduled)
 - Detailed logging
-- Health check monitoring
+
+✅ **Automatic Failover**
+- Backup proxy per connection with automatic switch on failure
+- Auto-failback when primary proxy recovers
+- Gateway force-down when no backup available
+- Configurable failure threshold and cooldown
 
 ### Use Cases
 
@@ -427,6 +433,36 @@ This guide will get you routing traffic through a proxy in 5 minutes.
 - ✓ Drop traffic if proxy fails (prevents leaks)
 - ✗ Fall back to default WAN if proxy fails
 
+#### Backup Proxy Tab (v0.4.0)
+
+**Backup Enabled** (Checkbox)
+- ✓ Enable backup proxy for automatic failover
+- ✗ No backup (gateway will be force-down on failure if autoForceDown enabled)
+
+**Backup Type** (Dropdown)
+- Same options as primary proxy type (SOCKS5, SOCKS5+TLS, HTTP, HTTPS)
+
+**Backup Server** (Required if Backup Enabled)
+- Hostname or IP of the backup proxy server
+
+**Backup Port** (Required if Backup Enabled)
+- Port of the backup proxy server (1-65535)
+
+**Backup Auth Enabled** (Checkbox)
+- Enable if backup proxy requires authentication
+
+**Backup Username / Password**
+- Credentials for the backup proxy (same rules as primary)
+
+**Failover Threshold** (Integer)
+- Number of consecutive health check failures before switching to backup
+- Default: 3, Range: 1-10
+
+**Failback Enabled** (Checkbox)
+- ✓ Automatically switch back to primary when it recovers (default)
+- ✗ Stay on backup until manual intervention
+- Failback requires 2 consecutive successful primary probes + 5-minute cooldown
+
 ### Global Settings
 
 Navigate to **Services → Proxy Gateway → Settings**
@@ -441,6 +477,10 @@ Navigate to **Services → Proxy Gateway → Settings**
 - `Warning`: Only warnings and errors
 - `Error`: Only errors
 - Recommended: `Warning` for production
+
+**Auto Force-Down** (Checkbox, v0.4.0)
+- ✓ Automatically set gateway `force_down=1` when health checks fail and no backup is configured (default: enabled)
+- ✗ Gateway stays up regardless of health status
 
 ---
 
@@ -597,9 +637,44 @@ LAN Device Request
        └─ youtube.com? ────▶ Match Rule 2 ──▶ Default WAN ──▶ Direct
 ```
 
-### Example 4: Gateway Group Failover
+### Example 4: Built-in Backup Proxy Failover (v0.4.0)
 
-**Scenario:** Primary proxy with automatic failover to backup.
+**Scenario:** Primary proxy with automatic failover to backup — no gateway group needed.
+
+**Configuration:**
+
+1. **Create Connection with Backup:**
+   ```
+   Services → Proxy Gateway → Connections → Edit
+
+   Primary Proxy:
+     Type: SOCKS5
+     Server: primary-proxy.example.com
+     Port: 1080
+
+   Backup Proxy:
+     Backup Enabled: ✓
+     Type: SOCKS5
+     Server: backup-proxy.example.com
+     Port: 1080
+     Failover Threshold: 3
+     Failback Enabled: ✓
+   ```
+
+2. **Apply Changes**
+
+**Behavior:**
+```
+Normal:    Primary healthy → traffic via primary proxy
+Failover:  3 consecutive health failures → automatic switch to backup (~2-3s downtime)
+Failback:  Primary recovers for 2 probes + 5min cooldown → automatic switch back
+```
+
+The watchdog monitors both proxies. No manual gateway group setup required.
+
+### Example 4b: Gateway Group Failover (Alternative)
+
+For failover between **separate connections** (not primary/backup on the same connection), use OPNsense gateway groups:
 
 **Network Topology:**
 ```
@@ -1450,4 +1525,7 @@ GET  /api/proxygateway/diagnostics/getStatus
 POST /api/proxygateway/diagnostics/testConnection
 GET  /api/proxygateway/diagnostics/getLogs
 POST /api/proxygateway/diagnostics/clearLogs
+GET  /api/proxygateway/diagnostics/getHealthHistory?name=<connection_name>
+GET  /api/proxygateway/diagnostics/getSpeedTestHistory?name=<connection_name>
+POST /api/proxygateway/diagnostics/runSpeedTest
 ```
