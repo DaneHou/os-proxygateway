@@ -341,7 +341,7 @@
                 tbody.empty();
 
                 if (!data || !data.data || data.data.length === 0) {
-                    tbody.append('<tr><td colspan="6" class="text-center text-muted">{{ lang._("No speed test results. Enable speed tests in General Settings and apply.") }}</td></tr>');
+                    tbody.append('<tr><td colspan="5" class="text-center text-muted">{{ lang._("No speed test results. Enable speed tests in General Settings and apply.") }}</td></tr>');
                     return;
                 }
 
@@ -349,40 +349,29 @@
                     var row = $('<tr>');
                     row.append($('<td>').text(item.name));
 
-                    // International speed
-                    row.append($('<td>').html(formatSpeedCell(item.international)));
-
-                    // Domestic speed
-                    row.append($('<td>').html(formatSpeedCell(item.domestic)));
+                    // Speed
+                    row.append($('<td>').html(formatSpeedCell(item.result)));
 
                     // Last tested
                     var lastTested = '-';
-                    var ts = null;
-                    if (item.international && item.international.timestamp) {
-                        ts = item.international.timestamp;
-                    }
-                    if (item.domestic && item.domestic.timestamp) {
-                        var dts = item.domestic.timestamp;
-                        if (!ts || parseInt(dts) > parseInt(ts)) {
-                            ts = dts;
-                        }
-                    }
-                    if (ts) {
-                        var d = new Date(parseInt(ts) * 1000);
+                    if (item.result && item.result.timestamp) {
+                        var d = new Date(parseInt(item.result.timestamp) * 1000);
                         lastTested = d.toLocaleTimeString();
                     }
                     row.append($('<td>').text(lastTested));
 
+                    // Test URL
+                    var testUrl = '-';
+                    if (item.result && item.result.test_url) {
+                        testUrl = item.result.test_url;
+                    }
+                    row.append($('<td>').html($('<span>').css('font-size', '11px').text(testUrl)));
+
                     // Actions
                     var actionsCell = $('<td>');
                     actionsCell.append(
-                        $('<button class="btn btn-xs btn-default btn-speedtest">').attr('data-name', item.name).attr('data-type', 'international')
-                            .html('<span class="fa fa-fw fa-globe"></span> Intl')
-                    );
-                    actionsCell.append(' ');
-                    actionsCell.append(
-                        $('<button class="btn btn-xs btn-default btn-speedtest">').attr('data-name', item.name).attr('data-type', 'domestic')
-                            .html('<span class="fa fa-fw fa-home"></span> Dom')
+                        $('<button class="btn btn-xs btn-default btn-speedtest">').attr('data-name', item.name)
+                            .html('<span class="fa fa-fw fa-tachometer"></span> Run')
                     );
                     row.append(actionsCell);
 
@@ -415,20 +404,14 @@
         // Run speed test button
         $(document).on('click', '.btn-speedtest', function() {
             var name = $(this).data('name');
-            var type = $(this).data('type');
             var btn = $(this);
             btn.prop('disabled', true).html('<span class="fa fa-fw fa-spinner fa-spin"></span>');
 
-            ajaxCall('/api/proxygateway/diagnostics/runSpeedTest', {name: name, type: type}, function(data, status) {
-                btn.prop('disabled', false);
-                if (type === 'international') {
-                    btn.html('<span class="fa fa-fw fa-globe"></span> Intl');
-                } else {
-                    btn.html('<span class="fa fa-fw fa-home"></span> Dom');
-                }
+            ajaxCall('/api/proxygateway/diagnostics/runSpeedTest', {name: name}, function(data, status) {
+                btn.prop('disabled', false).html('<span class="fa fa-fw fa-tachometer"></span> Run');
                 if (data.result) {
                     BootstrapDialog.show({
-                        title: 'Speed Test: ' + name + ' (' + type + ')',
+                        title: 'Speed Test: ' + name,
                         message: '<pre>' + $('<div/>').text(data.result).html() + '</pre>',
                         type: data.result.indexOf('OK') >= 0 ? BootstrapDialog.TYPE_SUCCESS : BootstrapDialog.TYPE_DANGER
                     });
@@ -525,9 +508,9 @@
         <thead>
             <tr>
                 <th>{{ lang._('Connection') }}</th>
-                <th>{{ lang._('International Speed') }}</th>
-                <th>{{ lang._('Domestic Speed') }}</th>
+                <th>{{ lang._('Speed') }}</th>
                 <th>{{ lang._('Last Tested') }}</th>
+                <th>{{ lang._('Test URL') }}</th>
                 <th>{{ lang._('Actions') }}</th>
             </tr>
         </thead>

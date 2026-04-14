@@ -141,42 +141,60 @@ def run_setup(conn):
     return result.returncode
 
 
-def save_healthcheck_config(conn):
-    """Append health check and speed test settings to the connection's .conf file.
+def save_extra_config(conn):
+    """Write health check, speed test, and backup settings to the .conf file.
 
-    This makes the custom targets available to healthcheck.sh and speedtest.sh
-    regardless of whether they're called from reconfigure.py or configd.
+    These settings can be hot-updated without restarting the connection.
+    Called both after setup and for unchanged connections on every reconfigure,
+    so that URL/threshold changes take effect immediately.
+
+    Rewrites the "extra" section (everything after the EXTRA_CONFIG marker)
+    while preserving the core settings written by setup.sh.
     """
     name = conn["name"]
     conf_file = os.path.join(RUNDIR, f"{name}.conf")
     if not os.path.isfile(conf_file):
         return
 
-    with open(conf_file, "a") as f:
-        target = conn.get("healthCheckTarget", "")
-        if target:
-            f.write(f'HEALTH_TARGET="{target}"\n')
+    marker = "# --- EXTRA_CONFIG ---"
 
-        speed_url = conn.get("speedTestUrl", "")
-        if speed_url:
-            f.write(f'SPEED_TEST_URL="{speed_url}"\n')
+    # Read existing file, keep everything before the marker
+    with open(conf_file) as f:
+        lines = f.readlines()
 
-        speed_url_domestic = conn.get("speedTestUrlDomestic", "")
-        if speed_url_domestic:
-            f.write(f'SPEED_TEST_URL_DOMESTIC="{speed_url_domestic}"\n')
+    core_lines = []
+    for line in lines:
+        if line.strip() == marker:
+            break
+        core_lines.append(line)
 
-        # Backup proxy config
-        if conn.get("backupEnabled") == "1":
-            f.write(f'BACKUP_ENABLED="1"\n')
-            f.write(f'BACKUP_PROXY_TYPE="{conn.get("backupProxyType", "socks5")}"\n')
-            f.write(f'BACKUP_PROXY_SERVER="{conn.get("backupProxyServer", "")}"\n')
-            f.write(f'BACKUP_PROXY_PORT="{conn.get("backupProxyPort", "1080")}"\n')
-            if conn.get("backupAuthEnabled") == "1":
-                f.write(f'BACKUP_AUTH_ENABLED="1"\n')
-                f.write(f'BACKUP_AUTH_USER="{conn.get("backupAuthUser", "")}"\n')
-                f.write(f'BACKUP_AUTH_PASS="{conn.get("backupAuthPass", "")}"\n')
-            f.write(f'FAILOVER_THRESHOLD="{conn.get("failoverThreshold", "3")}"\n')
-            f.write(f'FAILBACK_ENABLED="{conn.get("failbackEnabled", "1")}"\n')
+    # Rebuild extra section
+    extra = [f"{marker}\n"]
+
+    target = conn.get("healthCheckTarget", "")
+    if target:
+        extra.append(f'HEALTH_TARGET="{target}"\n')
+
+    speed_url = conn.get("speedTestUrl", "")
+    if speed_url:
+        extra.append(f'SPEED_TEST_URL="{speed_url}"\n')
+
+    # Backup proxy config
+    if conn.get("backupEnabled") == "1":
+        extra.append(f'BACKUP_ENABLED="1"\n')
+        extra.append(f'BACKUP_PROXY_TYPE="{conn.get("backupProxyType", "socks5")}"\n')
+        extra.append(f'BACKUP_PROXY_SERVER="{conn.get("backupProxyServer", "")}"\n')
+        extra.append(f'BACKUP_PROXY_PORT="{conn.get("backupProxyPort", "1080")}"\n')
+        if conn.get("backupAuthEnabled") == "1":
+            extra.append(f'BACKUP_AUTH_ENABLED="1"\n')
+            extra.append(f'BACKUP_AUTH_USER="{conn.get("backupAuthUser", "")}"\n')
+            extra.append(f'BACKUP_AUTH_PASS="{conn.get("backupAuthPass", "")}"\n')
+        extra.append(f'FAILOVER_THRESHOLD="{conn.get("failoverThreshold", "3")}"\n')
+        extra.append(f'FAILBACK_ENABLED="{conn.get("failbackEnabled", "1")}"\n')
+
+    with open(conf_file, "w") as f:
+        f.writelines(core_lines)
+        f.writelines(extra)
 
 
 def run_healthcheck(conn):
@@ -319,9 +337,7 @@ def main():
     for name in sorted(to_start | to_restart):
         if run_setup(desired[name]) == 0:
             started.append(name)
-            # Save health check config to .conf so healthcheck.sh (called by
-            # the Test button or cron) uses the same target/settings.
-            save_healthcheck_config(desired[name])
+            save_extra_config(desired[name])
 
     # Give tun2socks time to complete the SOCKS handshake before probing.
     # setup.sh exits once the TUN interface is up, but the proxy connection
@@ -333,8 +349,12 @@ def main():
         if desired[name].get("healthCheckEnabled", "1") == "1":
             run_healthcheck(desired[name])
 
-    # Summary
+    # Hot-update extra config (URLs, thresholds) for unchanged connections
     unchanged = to_check - to_restart
+    for name in sorted(unchanged):
+        save_extra_config(desired[name])
+
+    # Summary
     parts = []
     if unchanged:
         parts.append(f"unchanged={','.join(sorted(unchanged))}")

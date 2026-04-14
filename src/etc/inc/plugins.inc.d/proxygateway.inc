@@ -255,6 +255,22 @@ function proxygateway_firewall(\OPNsense\Firewall\Plugin $fw)
                     'log'        => false,
                 ]
             );
+
+            // Outbound NAT: allow policy-routed LAN/VPN traffic to exit via this tunnel
+            if (!empty((string)$conn->outboundNat)) {
+                $privateNets = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
+                foreach ($privateNets as $net) {
+                    $fw->registerSNatRule(100, [
+                        'interface'   => $intf_id,
+                        'source'      => ['network' => $net],
+                        'destination' => ['any' => true],
+                        'target'      => $intf_id . 'ip',
+                        'descr'       => "Proxy Gateway: NAT {$name} ({$net})",
+                        'log'         => false,
+                        '#ref'        => "pgw_{$name}_nat",
+                    ]);
+                }
+            }
         }
     }
 
@@ -369,7 +385,6 @@ function proxygateway_generate_desired($mdl = null)
             'gatewayPriority'   => (string)$conn->gatewayPriority,
             'logLevel'          => (string)$mdl->general->logLevel,
             'speedTestUrl'      => (string)$conn->speedTestUrl,
-            'speedTestUrlDomestic' => (string)$conn->speedTestUrlDomestic,
             'backupEnabled'       => (string)$conn->backupEnabled,
             'backupProxyType'     => (string)$conn->backupProxyType,
             'backupProxyServer'   => (string)$conn->backupProxyServer,
@@ -415,21 +430,15 @@ function proxygateway_generate_desired($mdl = null)
     if ((string)$mdl->general->speedTestEnabled === '1') {
         @file_put_contents($speedTestFlag, '1');
 
-        // Map OptionField values to numeric minutes/bytes
+        // Map OptionField values to numeric minutes
         $intervalMap = ['m5' => '5', 'm15' => '15', 'm30' => '30', 'm60' => '60'];
-        $sizeMap = ['s1m' => '1000000', 's5m' => '5000000', 's10m' => '10000000', 's25m' => '25000000'];
-
         $interval = (string)$mdl->general->speedTestInterval;
-        $size = (string)$mdl->general->speedTestSize;
 
         @file_put_contents('/var/run/proxygateway/speedtest.interval',
             $intervalMap[$interval] ?? '15');
-        @file_put_contents('/var/run/proxygateway/speedtest.size',
-            $sizeMap[$size] ?? '10000000');
     } else {
         @unlink($speedTestFlag);
         @unlink('/var/run/proxygateway/speedtest.interval');
-        @unlink('/var/run/proxygateway/speedtest.size');
     }
 
     // Manage auto force-down flag file

@@ -127,6 +127,12 @@
         <help>Maximum Transmission Unit for the tunnel (1280-9000, default 1500).</help>
     </field>
     <field>
+        <id>connection.outboundNat</id>
+        <label>Outbound NAT</label>
+        <type>checkbox</type>
+        <help>Auto-generate outbound NAT for private networks (10/8, 172.16/12, 192.168/16) on this tunnel interface. Required when using AppRouter or firewall policy routing to send LAN/VPN traffic through this proxy gateway.</help>
+    </field>
+    <field>
         <type>header</type>
         <label>Health Check</label>
     </field>
@@ -159,15 +165,9 @@
     </field>
     <field>
         <id>connection.speedTestUrl</id>
-        <label>International Test URL</label>
+        <label>Test URL</label>
         <type>text</type>
-        <help>Custom URL for international speed tests. Must be a direct-download URL. Leave empty to use default (Cloudflare speed test).</help>
-    </field>
-    <field>
-        <id>connection.speedTestUrlDomestic</id>
-        <label>Domestic Test URL</label>
-        <type>text</type>
-        <help>Custom URL for domestic (China) speed tests. Must be a direct-download URL. Leave empty to use default (USTC mirror).</help>
+        <help>Direct-download URL for speed tests. Must return a binary file (not HTML). Examples: http://speedtest.tele2.net/10MB.zip, https://proof.ovh.net/files/10Mb.dat, http://mirrors.ustc.edu.cn/ubuntu-releases/ls-lR.gz — Default: Tele2 10MB download.</help>
     </field>
     <field>
         <type>header</type>
