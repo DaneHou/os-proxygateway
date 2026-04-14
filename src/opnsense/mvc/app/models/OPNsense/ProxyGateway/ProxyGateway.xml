@@ -177,6 +177,10 @@
                     <MinimumValue>1280</MinimumValue>
                     <MaximumValue>9000</MaximumValue>
                 </tunMTU>
+                <outboundNat type="BooleanField">
+                    <default>1</default>
+                    <Required>Y</Required>
+                </outboundNat>
 
                 <!-- Health check -->
                 <healthCheckEnabled type="BooleanField">

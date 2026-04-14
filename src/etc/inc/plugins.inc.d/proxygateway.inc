@@ -255,6 +255,22 @@ function proxygateway_firewall(\OPNsense\Firewall\Plugin $fw)
                     'log'        => false,
                 ]
             );
+
+            // Outbound NAT: allow policy-routed LAN/VPN traffic to exit via this tunnel
+            if (!empty((string)$conn->outboundNat)) {
+                $privateNets = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
+                foreach ($privateNets as $net) {
+                    $fw->registerSNatRule(100, [
+                        'interface'   => $intf_id,
+                        'source'      => ['network' => $net],
+                        'destination' => ['any' => true],
+                        'target'      => $intf_id . 'ip',
+                        'descr'       => "Proxy Gateway: NAT {$name} ({$net})",
+                        'log'         => false,
+                        '#ref'        => "pgw_{$name}_nat",
+                    ]);
+                }
+            }
         }
     }
 
