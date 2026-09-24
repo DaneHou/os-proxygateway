@@ -1,7 +1,7 @@
 <?php
 
 /*
- * Copyright (c) 2024-2026 DaneBA
+ * Copyright (c) 2024-2026 os-proxygateway contributors
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without

@@ -12,7 +12,7 @@ You need a working OPNsense installation for testing. A VM works well:
 3. SSH in as root and clone the repo:
 
 ```sh
-git clone https://github.com/DaneBA/os-proxygateway.git ~/os-proxygateway
+git clone https://github.com/DaneHou/os-proxygateway.git ~/os-proxygateway
 cd ~/os-proxygateway
 make install
 ```
@@ -54,6 +54,9 @@ Follow OPNsense conventions:
 - Quote all variable expansions: `"$VAR"`, not `$VAR`
 - Prefer `$(command)` over backticks
 - Use `set -e` at the top of scripts
+- Never source runtime `.conf` files; read values with `conf_get` from
+  `lib/common.sh` (Python: `pgwconf.read_conf`)
+- Never pass credentials as command-line arguments (they show up in `ps`)
 
 ### XML (MVC Models, Menus, ACLs)
 
@@ -112,7 +115,7 @@ tail -f /var/log/proxygateway/*.log
 
 ## Reporting Bugs
 
-Open a [GitHub issue](https://github.com/DaneBA/os-proxygateway/issues/new)
+Open a [GitHub issue](https://github.com/DaneHou/os-proxygateway/issues/new)
 with:
 
 - OPNsense version (`opnsense-version`)
@@ -138,7 +141,7 @@ Do **not** open public issues for security vulnerabilities. See
 
 ## Questions?
 
-- Open a [GitHub Discussion](https://github.com/DaneBA/os-proxygateway/discussions) for general questions
+- Open a [GitHub Discussion](https://github.com/DaneHou/os-proxygateway/discussions) for general questions
 - Check existing issues before opening a new one
 - For OPNsense-specific questions (not plugin-related), try the [OPNsense Forum](https://forum.opnsense.org/)
 

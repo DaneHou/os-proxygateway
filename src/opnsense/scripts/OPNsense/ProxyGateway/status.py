@@ -11,6 +11,8 @@ import subprocess
 import sys
 import time
 
+import pgwconf
+
 RUNDIR = "/var/run/proxygateway"
 
 
@@ -104,13 +106,7 @@ def get_status():
         name = os.path.basename(conf_path).replace(".conf", "")
 
         # Read connection config
-        config = {}
-        with open(conf_path) as f:
-            for line in f:
-                line = line.strip()
-                if "=" in line:
-                    key, val = line.split("=", 1)
-                    config[key] = val.strip('"')
+        config = pgwconf.read_conf(conf_path)
 
         # Check if process is alive
         pid_file = os.path.join(RUNDIR, f"{name}.pid")

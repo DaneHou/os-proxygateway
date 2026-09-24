@@ -26,7 +26,7 @@ This plugin exists so you don't have to forget about it.
 
 ## What Proxy Gateway Does
 
-Proxy Gateway converts SOCKS5 and HTTP/HTTPS proxy servers into standard
+Proxy Gateway converts SOCKS5, HTTP CONNECT and Shadowsocks proxy servers into standard
 OPNsense gateway interfaces. Once installed, a proxy connection appears as a
 gateway just like your WAN or a VPN tunnel — you can route traffic through it
 using regular firewall rules.
@@ -40,9 +40,14 @@ The plugin handles everything automatically:
 - Runs [tun2socks](https://github.com/xjasonlyu/tun2socks) to bridge L3
   traffic to the L5 proxy protocol
 - Registers a gateway (`PROXYGW_<NAME>`) in OPNsense's routing system
-- Syncs interface IPs and gateway entries into `config.xml`
+- Assigns the interface and syncs interface IPs and gateway entries into
+  `config.xml` — no manual interface assignment
+- Registers outbound NAT for private (RFC1918) source networks on the tunnel
+  (per-connection checkbox, on by default)
 - Generates anti-routing-loop firewall rules automatically
-- Supports SOCKS5, SOCKS5+TLS, HTTP CONNECT, and HTTPS CONNECT
+- Monitors each connection and fails over to a backup proxy, or forces the
+  gateway down, when health checks fail
+- Supports SOCKS5, HTTP CONNECT, and Shadowsocks
 - Handles both TCP and UDP traffic (SOCKS5)
 
 After setup, routing traffic through a proxy is identical to routing through a
@@ -235,8 +240,8 @@ they get a local SOCKS5 listener. Every phone, tablet, smart TV, and IoT device
 on the network must be individually configured to use `192.168.1.1:1080` as a
 SOCKS5 proxy — assuming the device even supports it (most IoT devices do not).
 
-With Proxy Gateway: create a connection, assign the interface, add one firewall
-rule for the LAN subnet, done. Every device on the network transparently routes
+With Proxy Gateway: create a connection, click Apply, add one firewall rule for
+the LAN subnet, done. Every device on the network transparently routes
 through the proxy.
 
 ### pfSense — No SOCKS5 Support At All
@@ -311,7 +316,7 @@ The manual process requires:
 | GUI management | None | Full OPNsense MVC integration |
 | Health monitoring | None | HTTP-based health checks |
 | Auto-start on boot | Custom syshook script | Built-in toggle |
-| Gateway groups / failover | Manual | OPNsense gateway groups |
+| Gateway groups / failover | Manual | Built-in backup proxy failover + OPNsense gateway groups |
 | Survives OPNsense upgrade | Partial (must redo some steps) | `git pull && make install` |
 | Error handling | None | Structured logging, diagnostics page |
 | Credential security | Depends on implementation | Env vars, 0600 file permissions |
@@ -382,9 +387,11 @@ networks can identify and block VPN protocols:
 - OpenVPN traffic is identifiable even on port 443
 - IPsec IKE negotiation is easily fingerprinted
 
-SOCKS5 over TLS looks like ordinary HTTPS traffic. Protocols like Shadowsocks,
-V2Ray, and Trojan were specifically designed to be indistinguishable from normal
-web browsing — because they were built for environments where VPNs are blocked.
+Plain SOCKS5 and HTTP proxy traffic is unencrypted and just as easy to
+identify. Protocols like Shadowsocks, V2Ray, and Trojan were specifically
+designed to be hard to distinguish from normal web traffic — because they were
+built for environments where VPNs are blocked. Proxy Gateway speaks Shadowsocks
+directly (optionally with obfs-http / obfs-tls).
 
 > "I got ~70 Mbps using OpenVPN while ~250 Mbps using shadowsocks client alone.
 > Would it be possible to redirect all traffic to use shadowsocks WITHOUT using
@@ -446,8 +453,8 @@ fails for everything else.
 | **Apps that ignore proxy settings** (some games, update services, telemetry) | Traffic leaks around the proxy | All traffic is routed at the IP layer — no bypass possible |
 | **macOS / iOS** | Partial — system proxy, but many apps ignore it | Transparent. The device doesn't know or care. |
 | **Android** | Per-WiFi proxy setting, many apps ignore it | Transparent |
-| **Failover between two proxies** | No automatic failover in any OS | OPNsense gateway groups handle automatic failover |
-| **Kill switch if proxy goes down** | Depends on each app; most have none | Block the subnet's direct WAN access via firewall rules |
+| **Failover between two proxies** | No automatic failover in any OS | Built-in backup proxy per connection, or OPNsense gateway groups |
+| **Block traffic if proxy goes down** | Depends on each app; most have none | Gateway is forced down automatically; firewall rules block the subnet's direct WAN access |
 | **Auditing / logging** | Per-device, if at all | Centralized in OPNsense firewall logs |
 
 **Example: Censorship circumvention for a family.** A household of 5 people has
@@ -467,8 +474,8 @@ configuration.
 **Example: Corporate policy enforcement.** A company network requires that all
 traffic from the R&D VLAN exit through a monitored proxy. Employees cannot bypass
 this by disabling proxy settings on their devices, because routing is enforced at
-the firewall. If the proxy goes down, traffic is dropped (kill switch via
-firewall rules) rather than leaking to the direct WAN.
+the firewall. If the proxy goes down, traffic is dropped (gateway force-down
+plus a block rule) rather than leaking to the direct WAN.
 
 ## Feature Comparison
 
@@ -488,7 +495,7 @@ firewall rules) rather than leaking to the direct WAN.
 | Start on boot | Toggle in GUI | Yes | Custom syshook | Custom init script | N/A |
 | Survives upgrades | `git pull && make install` | Package manager | Redo manually | Redo manually | N/A |
 | Transparent to devices | Yes | No | Yes | Partially | No |
-| SOCKS5 + HTTP proxy | Both | Shadowsocks only | Both | Both | App-dependent |
+| SOCKS5 + HTTP proxy | Both (+ Shadowsocks) | Shadowsocks only | Both | Both | App-dependent |
 | Diagnostics page | Yes (logs, status, health, speed) | No | No | No | N/A |
 | Credential security | Env vars, 0600 perms | Config file | Varies | Config file | Stored per-app |
 | Works on OPNsense | Yes | Yes | Yes (manual) | No (Linux only) | N/A |
@@ -498,8 +505,8 @@ firewall rules) rather than leaking to the direct WAN.
 
 ### Route an entire VLAN through a proxy
 
-Create a proxy connection, assign the `pgw_<name>` interface, add a firewall
-rule matching the VLAN source with gateway set to `PROXYGW_<NAME>`. All traffic
+Create a proxy connection (the `pgw_<name>` interface, gateway and outbound NAT
+are set up automatically), add a firewall rule matching the VLAN source with gateway set to `PROXYGW_<NAME>`. All traffic
 from that VLAN exits through the proxy. No device configuration needed.
 
 *Real-world scenario:* A small office has a "guest" VLAN. All guest traffic
@@ -528,18 +535,21 @@ Three gateways, three firewall rules.
 
 ### Proxy failover with gateway groups
 
-Add multiple proxy gateways to an OPNsense gateway group with tier priorities.
-If one proxy goes down, traffic automatically fails over to the next.
+Each connection can have a built-in backup proxy that the watchdog switches to
+automatically. Alternatively, add multiple proxy gateways to an OPNsense gateway
+group with tier priorities: if one proxy goes down, traffic fails over to the
+next.
 
 *Real-world scenario:* Two SOCKS5 proxy servers for redundancy. Both are added
 as connections. Create a gateway group with `PROXYGW_PRIMARY` as Tier 1 and
-`PROXYGW_BACKUP` as Tier 2. When the primary proxy is unreachable (detected by
-the health check), OPNsense routes traffic through the backup automatically.
+`PROXYGW_BACKUP` as Tier 2. When the primary proxy fails its health checks, the
+watchdog forces its gateway down and OPNsense routes traffic through the backup
+automatically.
 
 ### Network-wide censorship circumvention
 
 In environments with Deep Packet Inspection, route all household traffic through
-a Shadowsocks or SOCKS5+TLS proxy transparently. No per-device setup.
+a Shadowsocks proxy (optionally with obfs) transparently. No per-device setup.
 
 *Real-world scenario:* A family in a country with internet censorship runs a
 Shadowsocks server abroad. Every device in the household — phones, laptops,
@@ -573,7 +583,7 @@ wrapper needed — recovering the full 250 Mbps throughput.
 
 ```bash
 # On OPNsense, as root:
-git clone https://github.com/DaneBA/os-proxygateway.git ~/os-proxygateway
+git clone https://github.com/DaneHou/os-proxygateway.git ~/os-proxygateway
 cd ~/os-proxygateway
 make install
 ```

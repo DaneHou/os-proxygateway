@@ -3,7 +3,7 @@
 # Post-install script for os-proxygateway
 
 # Create runtime directories
-mkdir -p /var/run/proxygateway
+mkdir -p -m 0750 /var/run/proxygateway
 mkdir -p /var/log/proxygateway
 
 # Set script permissions
@@ -12,6 +12,11 @@ chmod +x /usr/local/opnsense/scripts/OPNsense/ProxyGateway/*.py
 chmod +x /usr/local/etc/rc.d/opnsense-proxygateway
 # Logging library is sourced, not executed, but keep consistent
 chmod +r /usr/local/opnsense/scripts/OPNsense/ProxyGateway/lib/*.sh
+
+# Apply model migrations (e.g. M0_4_1 converts removed proxy types)
+if [ -x /usr/local/opnsense/mvc/script/run_migrations.php ]; then
+    /usr/local/opnsense/mvc/script/run_migrations.php
+fi
 
 # Enable the service
 sysrc proxygateway_enable=YES 2>/dev/null || true
@@ -25,9 +30,7 @@ sysrc proxygateway_enable=YES 2>/dev/null || true
 echo "os-proxygateway installed successfully."
 echo ""
 echo "Next steps:"
-echo "  1. Download tun2socks binary:"
-echo "     fetch -o /usr/local/bin/tun2socks https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-freebsd-amd64.zip"
-echo "     unzip /usr/local/bin/tun2socks-freebsd-amd64.zip -d /usr/local/bin/"
-echo "     chmod +x /usr/local/bin/tun2socks"
+echo "  1. Install the tun2socks binary (SHA256-verified):"
+echo "     make install-tun2socks   (from the os-proxygateway source tree)"
 echo "  2. Go to Services → Proxy Gateway to configure connections"
 echo "  3. Enable the service and add your first proxy connection"
