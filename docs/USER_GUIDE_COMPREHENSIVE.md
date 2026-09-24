@@ -1,7 +1,7 @@
 # Comprehensive User Guide: OS Proxy Gateway
 
-**Version:** 0.4.0
-**Last Updated:** 2026-03-08
+**Version:** 1.2.0
+**Last Updated:** 2026-09-24
 **Target Audience:** OPNsense administrators
 
 ---
@@ -16,9 +16,7 @@
 6. [Firewall Rule Examples](#firewall-rule-examples)
 7. [Use Case Scenarios](#use-case-scenarios)
 8. [Troubleshooting](#troubleshooting)
-9. [Advanced Topics](#advanced-topics)
-10. [API Reference](#api-reference)
-11. [Security Considerations](#security-considerations)
+9. [API Reference](#api-reference)
 
 ---
 
@@ -26,7 +24,7 @@
 
 ### What is OS Proxy Gateway?
 
-OS Proxy Gateway is an OPNsense plugin that converts remote SOCKS5 and HTTP/HTTPS proxy servers into standard OPNsense gateway interfaces. This enables you to route network traffic through proxies using native firewall rules, without requiring any client-side configuration.
+OS Proxy Gateway is an OPNsense plugin that converts remote SOCKS5, HTTP CONNECT and Shadowsocks proxy servers into standard OPNsense gateway interfaces. This enables you to route network traffic through proxies using native firewall rules, without requiring any client-side configuration.
 
 ### Key Benefits
 
@@ -57,7 +55,7 @@ OS Proxy Gateway is an OPNsense plugin that converts remote SOCKS5 and HTTP/HTTP
 - Backup proxy per connection with automatic switch on failure
 - Auto-failback when primary proxy recovers
 - Gateway force-down when no backup available
-- Configurable failure threshold and cooldown
+- Configurable failure threshold (fixed 5-minute failback cooldown)
 
 ### Use Cases
 
@@ -164,7 +162,7 @@ OS Proxy Gateway is an OPNsense plugin that converts remote SOCKS5 and HTTP/HTTP
 3. **Gateway Matched:** Traffic directed to proxy gateway (pgw_xxx)
 4. **TUN Interface:** Packet enters tunnel interface
 5. **tun2socks Processing:** Userland process captures packet
-6. **Proxy Protocol:** tun2socks encapsulates in SOCKS5/HTTP
+6. **Proxy Protocol:** tun2socks encapsulates in SOCKS5/HTTP CONNECT/Shadowsocks
 7. **Proxy Connection:** Traffic sent to proxy server
 8. **Proxy Forwarding:** Proxy forwards to final destination
 9. **Return Path:** Response follows same path in reverse
@@ -185,7 +183,7 @@ Before installing, ensure you have:
 
 ✅ **Network Requirements:**
 - At least 2 network interfaces (WAN + LAN)
-- One or more proxy servers (SOCKS5 or HTTP)
+- One or more proxy servers (SOCKS5, HTTP CONNECT or Shadowsocks)
 - Internet connectivity on WAN
 
 ✅ **Access Requirements:**
@@ -200,12 +198,16 @@ Before installing, ensure you have:
 ssh root@opnsense.local
 
 # Clone the repository
-git clone https://github.com/DaneBA/os-proxygateway.git ~/os-proxygateway
+git clone https://github.com/DaneHou/os-proxygateway.git ~/os-proxygateway
 cd ~/os-proxygateway
 
 # Install the plugin (downloads tun2socks, installs files, restarts services)
 make install
 ```
+
+`make install` downloads the tun2socks release for your architecture and
+verifies it against a pinned SHA256 checksum; if the checksum does not match,
+the install stops and nothing is installed.
 
 Hard-refresh your browser (Ctrl+Shift+R) after install. The plugin appears
 under **Services > Proxy Gateway**.
@@ -270,40 +272,39 @@ This guide will get you routing traffic through a proxy in 5 minutes.
 
 **Prerequisites:**
 - OPNsense installed and configured
-- Access to a SOCKS5 or HTTP proxy server
+- Access to a SOCKS5, HTTP CONNECT or Shadowsocks proxy server
 
 #### Step 1: Create Proxy Connection
 
 1. Navigate to **Services > Proxy Gateway > Connections**
-2. Click **+** to add a connection
-3. Fill in:
+2. In the general settings at the top of the page, check **Enable Proxy Gateway**
+   (off by default) and click **Save**
+3. Click **+** to add a connection
+4. Fill in:
    - **Name:** `myproxy`
    - **Enabled:** checked
    - **Type:** SOCKS5
    - **Server:** `proxy.example.com`
    - **Port:** `1080`
-   - (If auth needed: enable auth, fill username/password)
-4. Click **Save**, then **Apply Changes**
+   - (If auth needed: enable **Authentication**, fill username/password)
+   - Leave **Outbound NAT** checked (default)
+5. Click **Save**, then **Apply**
 
-#### Step 2: Assign the Interface
+#### Step 2: Check the Interface and Gateway
 
-1. Navigate to **Interfaces > Assignments**
-2. Find `pgw_myproxy` in the dropdown, click **+** to add it
-3. Click the new interface name (e.g. OPT5), check **Enable**, click **Save**
-4. Go back to **Services > Proxy Gateway** and click **Apply Changes** again
-   - This auto-configures the IP address and creates the gateway `PROXYGW_MYPROXY`
+Nothing needs to be assigned or created by hand. On Apply the plugin:
 
-#### Step 3: Add Outbound NAT
+- assigns the `pgw_myproxy` interface in config.xml (visible under
+  **Interfaces > Assignments**) and configures its tunnel address,
+- creates the gateway `PROXYGW_MYPROXY` (visible under **System > Gateways**),
+- registers outbound NAT on `pgw_myproxy` for private (RFC1918) source
+  networks: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`.
 
-1. Navigate to **Firewall > NAT > Outbound**
-2. Switch to **Hybrid** mode if not already
-3. Add a rule:
-   - **Interface:** WAN
-   - **Source:** the pgw_myproxy subnet (e.g. `172.31.x.x/32`)
-   - **Translation:** Interface address
-4. Click **Save**, then **Apply Changes**
+You only need a manual outbound NAT rule (**Firewall > NAT > Outbound**, Hybrid
+mode, interface `pgw_myproxy`, translation: interface address) if you uncheck
+**Outbound NAT** or route clients whose source addresses are not RFC1918.
 
-#### Step 4: Create Firewall Rule
+#### Step 3: Create Firewall Rule
 
 1. Navigate to **Firewall > Rules > LAN**
 2. Add a rule **above** the default allow rule:
@@ -313,7 +314,7 @@ This guide will get you routing traffic through a proxy in 5 minutes.
    - **Gateway:** `PROXYGW_MYPROXY`
 3. Click **Save**, then **Apply Changes**
 
-#### Step 5: Test
+#### Step 4: Test
 
 1. On device 192.168.1.100, visit https://ifconfig.me
    - Should show the proxy server's IP address
@@ -325,26 +326,38 @@ This guide will get you routing traffic through a proxy in 5 minutes.
 
 ### Connection Settings
 
-#### General Tab
+Connections are edited in **Services > Proxy Gateway > Connections** (click
+**+** or the edit icon). The dialog is split into the sections below. After
+saving, click **Apply** to start, restart or stop connections.
+
+#### General
+
+**Enabled** (Checkbox, default: checked)
+- ✓ Checked: Connection active (tunnel, interface and gateway are created)
+- ✗ Unchecked: Connection stopped; configuration is kept, but the `pgw_<name>`
+  interface assignment and `PROXYGW_<NAME>` gateway are removed
 
 **Name** (Required)
 - 1-16 characters
-- Alphanumeric, underscore, hyphen only
-- Example: `us_proxy`, `corporate-proxy`, `backup_1`
-- Used in interface name: `pgw_<name>`
+- Letters, digits and underscore only
+- Example: `us_proxy`, `corp_proxy`, `backup_1`
+- Used in interface name `pgw_<name>` and gateway name `PROXYGW_<NAME>`
+  (upper-cased)
 
 **Description** (Optional)
-- Free-form text
-- Helps identify connection purpose
+- Up to 64 characters: letters, digits, spaces, `-`, `_`, `.`
+- Used as the interface description when the interface is auto-assigned
 - Example: "US West Coast Proxy for Streaming"
 
-**Enabled** (Checkbox)
-- ✓ Checked: Connection active
-- ✗ Unchecked: Connection disabled but configuration saved
+#### Proxy Server
 
-#### Proxy Server Tab
+**Proxy Server Interface** (Dropdown, default: WAN)
+- The OPNsense interface through which the proxy server is reachable
+- Example: for a Tailscale SOCKS5 proxy on a host in LAN2, select LAN2
+- Used for the anti-routing-loop rules that keep tun2socks' own connection to
+  the proxy off the tunnel
 
-**Type** (Dropdown - Required)
+**Type** (Dropdown - Required, default: SOCKS5)
 - `SOCKS5`: Standard SOCKS5 proxy (supports TCP + UDP)
 - `HTTP CONNECT`: HTTP proxy using CONNECT method (TCP only)
 - `Shadowsocks`: Shadowsocks server (encrypted, optional obfs)
@@ -359,36 +372,62 @@ This guide will get you routing traffic through a proxy in 5 minutes.
 - Examples:
   - `proxy.example.com`
   - `192.168.100.50`
-  - `[2001:db8::1]` (IPv6 - for future support)
+  - `[2001:db8::1]` (IPv6, in brackets)
 
-**Port** (Required)
+**Port** (Required, default: 1080)
 - 1-65535
 - Common ports:
   - SOCKS5: 1080
   - HTTP: 8080, 3128
+  - Shadowsocks: as configured on the server (e.g. 8388)
 
-**Auth Enabled** (Checkbox)
-- ✓ Required for proxies needing authentication
+**Authentication** (Checkbox)
+- ✓ Required for proxies needing authentication (SOCKS5 / HTTP CONNECT)
 - ✗ Anonymous/open proxies
+- Not used for Shadowsocks — use the Shadowsocks Password instead
 
-**Username** (Required if Auth Enabled)
+**Username** (Required if Authentication is enabled)
 - 1-64 characters
 - Allowed: alphanumeric, `@`, `.`, `_`, `-`
 - Example: `user@company.com`, `proxy_user`
 
-**Password** (Required if Auth Enabled)
-- 1-128 characters
-- Printable ASCII characters
-- ⚠️ **Security Note:** Currently stored in plaintext in config.xml
+**Password** (Required if Authentication is enabled)
+- 1-128 characters, any printable ASCII (including `@ : / ? # %` and spaces)
+- Special characters are URL-encoded automatically; the password is never
+  passed on a command line, so it does not appear in process listings (`ps`)
+- ⚠️ **Security Note:** Stored in plaintext in config.xml (like other OPNsense
+  credentials)
 - Recommendation: Use strong, unique passwords
 
-#### Tunnel Settings Tab
+#### Shadowsocks Settings
+
+Shown only when **Type** is Shadowsocks.
+
+**Encryption Method** (Dropdown, default: AES-256-GCM)
+- AEAD ciphers only: `AES-128-GCM`, `AES-256-GCM`, `ChaCha20-IETF-Poly1305`,
+  `XChaCha20-IETF-Poly1305`
+- Must match the server
+
+**Shadowsocks Password**
+- The Shadowsocks shared secret (not proxy authentication)
+- Up to 128 printable ASCII characters; handled the same way as the proxy
+  password (URL-encoded, never in process listings)
+
+**Obfuscation** (Dropdown, default: None)
+- Optional simple-obfs plugin: `HTTP (obfs-http)` or `TLS (obfs-tls)`
+- Must match the server
+
+**Obfuscation Host** (Shown when Obfuscation is set)
+- Hostname sent as the HTTP Host header (obfs-http) or TLS SNI (obfs-tls)
+- Example: `www.example.com`
+
+#### Tunnel Settings
 
 **Tunnel Address** (Optional)
 - Auto-assigned from 172.31.0.0/16 if left empty
 - Manual example: `172.31.10.1`
 - Format: IPv4 address only
-- Note: Address is for local tunnel endpoint
+- Note: Address is for local tunnel endpoint (/32 point-to-point)
 
 **MTU** (Optional)
 - Default: 1500
@@ -396,51 +435,63 @@ This guide will get you routing traffic through a proxy in 5 minutes.
 - Lower if proxy is over VPN or has small MTU
 - Recommended: 1500 (standard), 1420 (over VPN)
 
-#### DNS Settings Tab
+**Outbound NAT** (Checkbox, default: checked)
+- ✓ Automatically registers outbound NAT on the `pgw_<name>` interface for
+  private source networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`)
+- ✗ No automatic NAT — add your own rule under **Firewall > NAT > Outbound**
+- Needed whenever LAN/VPN traffic is policy-routed through this gateway; also
+  add a manual rule for non-RFC1918 source networks
 
-**DNS Mode** (Dropdown)
-- `Route through tunnel`: DNS queries go through proxy (recommended)
-- `Custom DNS server`: Use specific DNS server
+#### Health Check
 
-**DNS Server** (Required if Custom mode)
-- IPv4 address of DNS server
-- Example: `8.8.8.8`, `1.1.1.1`
-- Used for all DNS queries from routed clients
+Health checks are run by the watchdog every 60 seconds (the interval is fixed)
+while **Auto-reconnect (Watchdog)** is enabled in the global settings. Each
+probe fetches the target URL through the proxy; the result and latency are
+recorded in the health history shown on the Diagnostics page, and drive
+failover and gateway force-down.
 
-#### Health Check Tab
+**Enable Health Check** (Checkbox, default: checked)
+- ✓ Periodic connectivity probes through the proxy
+- ✗ No health monitoring — no failover and no automatic force-down for this
+  connection
+- Required for the backup proxy / failover
 
-**Enabled** (Checkbox)
-- ✓ Periodic connectivity checks
-- ✗ No health monitoring (gateway always shown as UP)
-
-**Interval** (Seconds)
-- Range: 5-3600
-- Default: 30
-- Recommended: 30 for production, 60 for low-priority
-
-**Target** (Optional)
-- URL to probe for connectivity
-- Default: `http://1.1.1.1/` (Cloudflare)
-- Custom example: `http://your-server.com/health`
+**Target URL** (Optional)
+- HTTP or HTTPS URL to probe for connectivity
+- Default: `http://1.1.1.1/` (Cloudflare; IP-based, so no DNS is needed)
+- Custom example: `http://example.com/health`
+- A probe fails only if no HTTP response comes back through the proxy
 - ⚠️ **Privacy Note:** Default target leaks usage patterns to Cloudflare
 
-#### Gateway Settings Tab
+#### Gateway
 
-**Priority** (1-255)
+**Gateway Priority** (1-255)
 - Default: 255
 - Lower number = higher priority
 - Used when multiple gateways available
 - Example: Primary=50, Backup=100
 
-**Kill Switch** (Checkbox)
-- ✓ Drop traffic if proxy fails (prevents leaks)
-- ✗ Fall back to default WAN if proxy fails
+The gateway `PROXYGW_<NAME>` is created with dpinger monitoring disabled
+(SOCKS5 cannot carry ICMP), so OPNsense does not mark it offline by itself. It
+goes down only when the watchdog forces it down (see **Auto Force-Down
+Gateway**).
 
-#### Backup Proxy Tab (v0.4.0)
+#### Speed Test
 
-**Backup Enabled** (Checkbox)
-- ✓ Enable backup proxy for automatic failover
-- ✗ No backup (gateway will be force-down on failure if autoForceDown enabled)
+**Test URL** (Optional)
+- Direct-download URL used for speed tests on this connection
+- Must return a binary file, not an HTML page
+- Examples: `http://speedtest.tele2.net/10MB.zip`,
+  `https://proof.ovh.net/files/10Mb.dat`
+- Default: Tele2 10 MB download
+- Each test downloads the file through the proxy and uses bandwidth
+
+#### Backup Proxy (Failover)
+
+**Enable Backup Proxy** (Checkbox)
+- ✓ Enable backup proxy for automatic failover (requires Health Check)
+- ✗ No backup (gateway will be forced down on failure if Auto Force-Down
+  Gateway is enabled)
 
 **Backup Type** (Dropdown)
 - Same options as primary proxy type (SOCKS5, HTTP CONNECT, Shadowsocks)
@@ -448,42 +499,71 @@ This guide will get you routing traffic through a proxy in 5 minutes.
 **Backup Server** (Required if Backup Enabled)
 - Hostname or IP of the backup proxy server
 
-**Backup Port** (Required if Backup Enabled)
+**Backup Port** (Required if Backup Enabled, default: 1080)
 - Port of the backup proxy server (1-65535)
 
-**Backup Auth Enabled** (Checkbox)
+**Backup Authentication** (Checkbox)
 - Enable if backup proxy requires authentication
 
-**Backup Username / Password**
+**Backup Username / Backup Password**
 - Credentials for the backup proxy (same rules as primary)
+
+**Backup SS Method / Backup SS Password** (Shown when Backup Type is Shadowsocks)
+- Encryption method and shared secret for a Shadowsocks backup server (same
+  options as the primary)
 
 **Failover Threshold** (Integer)
 - Number of consecutive health check failures before switching to backup
 - Default: 3, Range: 1-10
+- With 60-second checks, the default threshold means about 3 minutes
 
-**Failback Enabled** (Checkbox)
+**Auto Failback** (Checkbox)
 - ✓ Automatically switch back to primary when it recovers (default)
 - ✗ Stay on backup until manual intervention
-- Failback requires 2 consecutive successful primary probes + 5-minute cooldown
+- The primary is probed directly (not through the tunnel); failback requires
+  2 consecutive successful probes and happens no sooner than 5 minutes after
+  the last switch
 
 ### Global Settings
 
-Navigate to **Services → Proxy Gateway → Settings**
+The global settings are shown at the top of **Services > Proxy Gateway >
+Connections**.
 
-**Plugin Enabled** (Checkbox)
+**Enable Proxy Gateway** (Checkbox, default: off)
 - Master switch for entire plugin
 - Unchecking stops all connections
+
+**Start connections on boot** (Checkbox, default: on)
+- Start all enabled connections when the system boots
+- When off, connections start only when you click **Apply**
+
+**Auto-reconnect (Watchdog)** (Checkbox, default: on)
+- Runs every 60 seconds: restarts any enabled connection whose tun2socks
+  process has died, and runs the periodic health checks that drive failover,
+  failback and force-down
+- When off, none of these automatic actions happen
 
 **Log Level** (Dropdown)
 - `Debug`: Very verbose (development only)
 - `Info`: Normal verbosity
-- `Warning`: Only warnings and errors
+- `Warning`: Only warnings and errors (default)
 - `Error`: Only errors
 - Recommended: `Warning` for production
 
-**Auto Force-Down** (Checkbox, v0.4.0)
-- ✓ Automatically set gateway `force_down=1` when health checks fail and no backup is configured (default: enabled)
+**Enable Speed Test** (Checkbox, default: off)
+- Periodically measures download throughput through each connection; results
+  appear on the Diagnostics page
+- Each test downloads a file through the proxy and consumes bandwidth
+
+**Test Interval** (Dropdown, default: 15 minutes)
+- 5, 15, 30 or 60 minutes
+
+**Auto Force-Down Gateway** (Checkbox, default: on)
+- ✓ Sets the gateway to `force_down` when the health check fails
+  *Failover Threshold* times in a row and there is no working backup; clears
+  it automatically once the connection is healthy again
 - ✗ Gateway stays up regardless of health status
+- With a backup proxy configured, failover to the backup is tried first
 
 ---
 
@@ -655,13 +735,16 @@ LAN Device Request
      Server: primary-proxy.example.com
      Port: 1080
 
+   Health Check:
+     Enable Health Check: ✓
+
    Backup Proxy:
-     Backup Enabled: ✓
-     Type: SOCKS5
-     Server: backup-proxy.example.com
-     Port: 1080
+     Enable Backup Proxy: ✓
+     Backup Type: SOCKS5
+     Backup Server: backup-proxy.example.com
+     Backup Port: 1080
      Failover Threshold: 3
-     Failback Enabled: ✓
+     Auto Failback: ✓
    ```
 
 2. **Apply Changes**
@@ -669,11 +752,12 @@ LAN Device Request
 **Behavior:**
 ```
 Normal:    Primary healthy → traffic via primary proxy
-Failover:  3 consecutive health failures → automatic switch to backup (~2-3s downtime)
+Failover:  3 consecutive health failures (checked every 60s) → automatic switch to backup (~2-3s downtime)
 Failback:  Primary recovers for 2 probes + 5min cooldown → automatic switch back
 ```
 
-The watchdog monitors both proxies. No manual gateway group setup required.
+The watchdog (global **Auto-reconnect (Watchdog)** setting) monitors both
+proxies. No manual gateway group setup required.
 
 ### Example 4b: Gateway Group Failover (Alternative)
 
@@ -694,8 +778,13 @@ Name:        ProxyFailover
 Description: Primary proxy with backup
 Gateway:     PROXYGW_PRIMARY (Tier 1)
 Gateway:     PROXYGW_BACKUP (Tier 2)
-Trigger:     Packet Loss + High Latency
+Trigger:     Member Down
 ```
+
+Proxy gateways have dpinger monitoring disabled, so latency/loss triggers never
+fire. A member is "down" only when the watchdog forces it down, so keep **Enable
+Health Check** on for both connections and **Auto Force-Down Gateway** on in the
+global settings.
 
 **Step 2: Create Firewall Rule**
 ```
@@ -719,13 +808,13 @@ Description: High-availability proxy routing
               └──────────┬───────────┘
                          │
               ┌──────────▼──────────┐
-              │   Health Check      │
-              │   Primary: UP?      │
+              │ Primary forced down?│
+              │ (health check)      │
               └──────────┬──────────┘
                          │
               ┌──────────▼──────────┐
-              │  Yes: Use Primary   │
-              │  No: Use Backup     │
+              │  No:  Use Primary   │
+              │  Yes: Use Backup    │
               └──────────┬──────────┘
                          │
            ┌─────────────┴────────────┐
@@ -760,7 +849,7 @@ Description: Load balance across 3 proxies
 Gateway:     PROXYGW_US1 (Tier 1, Weight 1)
 Gateway:     PROXYGW_US2 (Tier 1, Weight 1)
 Gateway:     PROXYGW_US3 (Tier 1, Weight 2)
-Trigger:     Packet Loss + High Latency
+Trigger:     Member Down
 ```
 
 **Step 2: Create Firewall Rule**
@@ -877,7 +966,7 @@ PROXYGW_CORP      Default WAN      PROXYGW_CORP
 **Configuration:**
 
 1. **Create Proxy Connections:**
-   - Name: `vpn`, Type: SOCKS5, Server: alice-vpn-proxy.com:1080
+   - Name: `vpn`, Type: SOCKS5, Server: alice-vpn-proxy.example.com:1080
    - Name: `filter`, Type: HTTP, Server: iot-filter-proxy.local:8080
 
 2. **Create Firewall Rules:**
@@ -921,7 +1010,7 @@ LAN: 192.168.1.0/24
    ```
    Name: us
    Type: SOCKS5
-   Server: us-proxy.streamingservice.com
+   Server: us-proxy.example.com
    Port: 1080
    Auth: enabled (username/password from service)
    ```
@@ -935,8 +1024,10 @@ LAN: 192.168.1.0/24
    ```
 
 3. **Configure DNS (Optional):**
-   - Set Smart TV to use DNS: 8.8.8.8
-   - Or use DNS mode: custom with US DNS server
+   - Set the Smart TV to use a public resolver (e.g. 8.8.8.8), so its DNS
+     queries are matched by the rule above and resolved via the US proxy
+   - The plugin has no DNS setting; if the TV uses OPNsense (Unbound) as its
+     resolver, lookups leave through the firewall's own WAN route
 
 **Testing:**
 ```bash
@@ -953,14 +1044,14 @@ curl ifconfig.me
 **Requirement:**
 - All office traffic through corporate proxy
 - Automatic failover to backup proxy
-- Kill switch (no direct Internet if both proxies fail)
+- No direct Internet if both proxies fail
 
 **Network Design:**
 ```
 Office LAN: 10.0.10.0/24
 ├─ Primary Proxy: corporate-proxy1.company.com
 ├─ Backup Proxy: corporate-proxy2.company.com
-└─ Kill Switch: Drop if both fail
+└─ Both down: traffic dropped (firewall rules)
 ```
 
 **Configuration:**
@@ -973,7 +1064,6 @@ Office LAN: 10.0.10.0/24
    Server: corporate-proxy1.company.com
    Port: 8080
    Auth: corporate credentials
-   Kill Switch: enabled
 
    Connection 2:
    Name: corp_backup
@@ -981,30 +1071,48 @@ Office LAN: 10.0.10.0/24
    Server: corporate-proxy2.company.com
    Port: 8080
    Auth: corporate credentials
-   Kill Switch: enabled
    ```
+   Keep **Enable Health Check** on for both, and **Auto Force-Down Gateway**
+   on in the global settings.
+
+   (Alternatively, use one connection with a **Backup Proxy** — see Example 4.)
 
 2. **Create Gateway Group:**
    ```
    Name: CorporateProxies
    Tier 1: PROXYGW_CORP_PRIMARY
    Tier 2: PROXYGW_CORP_BACKUP
-   Trigger: Packet Loss + High Latency
+   Trigger: Member Down
    ```
 
-3. **Create Firewall Rule:**
+3. **Create Firewall Rules:**
    ```
+   Rule 1:
+   Action: Pass
    Interface: LAN
    Source: LAN net (10.0.10.0/24)
    Destination: any
    Gateway: CorporateProxies (group)
+
+   Rule 2 (below Rule 1):
+   Action: Block
+   Interface: LAN
+   Source: LAN net (10.0.10.0/24)
+   Destination: any
    ```
+
+4. **Prevent fallback to WAN:**
+   - **Firewall > Settings > Advanced:** enable *Skip rules when gateway is
+     down*, so Rule 1 is skipped (and Rule 2 blocks) when every gateway in the
+     group is down, instead of passing traffic via the default route
+   - **System > Settings > General:** leave *Allow default gateway switching*
+     disabled
 
 **Behavior:**
 ```
 Normal: Primary UP → All traffic via Primary
 Failover: Primary DOWN → All traffic via Backup
-Emergency: Both DOWN + Kill Switch → Traffic DROPPED
+Emergency: Both forced DOWN → Rule 1 skipped, Rule 2 → Traffic DROPPED
 ```
 
 ### Scenario 4: Developer Test Environment
@@ -1156,7 +1264,7 @@ Create gateway groups for quick switching via GUI dropdown in test scripts.
 | Wrong gateway selected | Rule uses different gateway | Edit rule, select correct PROXYGW_X |
 | Gateway offline | Proxy connection down | Check connection status |
 | Rule disabled | Checkbox unchecked | Enable rule |
-| NAT conflict | Outbound NAT override | Check Firewall → NAT → Outbound |
+| NAT missing/conflict | Outbound NAT unchecked, non-RFC1918 source, or manual override | Check the connection's **Outbound NAT** box and Firewall → NAT → Outbound |
 | Client-side proxy | Device has proxy configured | Remove client proxy settings |
 
 ### Slow Performance / High Latency
@@ -1198,14 +1306,17 @@ Create gateway groups for quick switching via GUI dropdown in test scripts.
 
 ```
 Reduce MTU: 1500 → 1420 (if over VPN)
-Increase health check interval: 30s → 60s
-Disable health checks (if stable proxy)
 Use SOCKS5 instead of HTTP (lower overhead)
+Disable scheduled speed tests (they consume proxy bandwidth)
 ```
 
 ### DNS Leaks
 
 **Symptom:** DNS queries go direct instead of through proxy.
+
+The plugin has no DNS setting of its own: DNS is routed like any other traffic.
+A query goes through the proxy only if the client sends it to an external
+resolver **and** a firewall rule with the proxy gateway matches it.
 
 **Diagnostic Steps:**
 
@@ -1213,90 +1324,115 @@ Use SOCKS5 instead of HTTP (lower overhead)
    ```bash
    # From client device:
    # Visit: https://dnsleaktest.com
-   # Should show proxy provider's DNS or configured custom DNS
+   # Should show the resolver you chose, seen from the proxy's location
    # Should NOT show ISP DNS
    ```
 
-2. **Check DNS Mode:**
-   - Services → Proxy Gateway → Connections → [Connection] → DNS Settings
-   - Verify: "Route through tunnel" is selected
-
-3. **Check Firewall DNS Rules:**
-   ```bash
-   # Firewall → Rules → [Interface]
-   # Should have DNS (port 53) routed through proxy
-   # Or DNS traffic blocked to force through tunnel
-   ```
-
-4. **Check Client DNS:**
+2. **Check Client DNS:**
    ```bash
    # On client device:
    # Windows: ipconfig /all
    # Linux: cat /etc/resolv.conf
    # macOS: scutil --dns
-   # DNS server should be gateway (192.168.1.1) or tunnel DNS
+   ```
+   If the client uses OPNsense (e.g. 192.168.1.1) as its DNS server, Unbound
+   resolves the query itself and sends it out through the firewall's default
+   route (WAN), not through the proxy.
+
+3. **Check Firewall DNS Rules:**
+   ```bash
+   # Firewall → Rules → [Interface]
+   # Port 53 traffic to the external resolver must match a rule
+   # with Gateway = PROXYGW_<NAME>
    ```
 
 **Fix DNS Leaks:**
 
-**Option 1: Route DNS Through Tunnel**
+**Option 1: Use an External Resolver on the Client**
 ```
-Connection → DNS Settings → Mode: Route through tunnel
-This sends all DNS via proxy
-```
-
-**Option 2: Custom DNS Server**
-```
-Connection → DNS Settings → Mode: Custom
-DNS Server: 8.8.8.8 (or proxy provider's DNS)
+Client (or DHCP server option) DNS: a public resolver, e.g. 1.1.1.1
+The proxy-gateway rule for that client then carries its DNS queries too
 ```
 
-**Option 3: Force DNS Through Tunnel (Firewall Rule)**
+**Option 2: Force DNS Through the Proxy (Firewall Rules)**
 ```
-Create rule ABOVE proxy rule:
+Rule A (above the proxy rule):
+  Action: Pass
+  Protocol: TCP/UDP
+  Source: <client or subnet>
+  Destination: <chosen resolver IP>
+  Destination Port: 53 (DNS)
+  Gateway: PROXYGW_<NAME>
+
+Rule B (below Rule A):
   Action: Reject
   Protocol: TCP/UDP
+  Source: <client or subnet>
   Destination Port: 53 (DNS)
-  Description: Block direct DNS (force through proxy)
+  Description: Block any other DNS
 ```
 
-### Kill Switch Not Working
+> **Note:** HTTP CONNECT proxies carry TCP only, so UDP DNS through an HTTP
+> gateway fails. Use a SOCKS5 or Shadowsocks connection for UDP DNS, or have
+> clients use DNS over TCP/HTTPS.
+
+### Traffic Leaks to WAN When the Proxy Is Down
 
 **Symptom:** Traffic falls back to WAN when proxy fails.
 
+There is no "kill switch" checkbox in the plugin. Blocking traffic when a proxy
+is down is done with the gateway force-down plus standard OPNsense settings.
+
+**How it works:**
+
+1. The watchdog runs a health check every 60 seconds (requires **Enable Health
+   Check** on the connection and **Auto-reconnect (Watchdog)** globally)
+2. After *Failover Threshold* consecutive failures with no working backup, it
+   sets the gateway `PROXYGW_<NAME>` to force-down (requires **Auto Force-Down
+   Gateway**), and clears it again once the proxy is healthy
+3. What OPNsense does with a rule whose gateway is down depends on the firewall
+   settings below
+
+**Configuration:**
+
+1. **Firewall > Settings > Advanced:** enable *Skip rules when gateway is
+   down*. Without this, a rule whose gateway is down is still loaded without
+   the gateway, so its traffic goes out via the default route (WAN).
+2. Add a **Block** rule for the same source directly below the proxy-gateway
+   rule, so traffic that is no longer matched by the skipped rule is dropped
+   instead of hitting the default LAN allow rule.
+3. **System > Settings > General:** leave *Allow default gateway switching*
+   disabled.
+
 **Diagnostic Steps:**
 
-1. **Verify Kill Switch Enabled:**
-   ```
-   Services → Proxy Gateway → Connections → [Connection]
-   → Gateway Settings → Kill Switch: ✓
-   ```
-
-2. **Check Gateway Status:**
+1. **Check Gateway Status:**
    ```
    System → Gateways → Status
-   PROXYGW_<name> should show "Offline" when proxy down
+   PROXYGW_<name> should show as down (force down) after the threshold is reached
    ```
 
-3. **Test Failover:**
+2. **Check the Watchdog Log:**
+   ```bash
+   tail -f /var/log/proxygateway/watchdog.log
+   # Look for "gateway forced down" / "clearing gateway force_down"
+   ```
+
+3. **Test:**
    - Stop proxy server
+   - Wait for *Failover Threshold* × 60 seconds
    - Try accessing internet from client
    - Should FAIL (no connection)
-
-4. **Check Firewall State:**
-   ```bash
-   # Diagnostics → States → States
-   # Look for states using PROXYGW_X gateway
-   # When proxy down, states should be killed
-   ```
 
 **Common Issues:**
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| Traffic still flows | Multiple routes | Remove default allow rule |
-| Gateway stays UP | Health check disabled | Enable health checks |
-| Failover to WAN | Gateway group | Remove from gateway group or adjust tiers |
+| Traffic still flows | Default allow rule matches next | Add a block rule below the proxy rule |
+| Traffic goes out WAN | Rule loaded without gateway | Enable *Skip rules when gateway is down* |
+| Gateway stays UP | Health check, watchdog or Auto Force-Down disabled | Enable all three |
+| Gateway stays UP | Backup proxy is working | Expected: traffic uses the backup |
+| Failover to WAN | WAN is a member of the gateway group | Remove WAN from the group |
 
 ### Connection Drops Frequently
 
@@ -1313,10 +1449,11 @@ Create rule ABOVE proxy rule:
 
 2. **Adjust Health Check:**
    ```
-   Increase interval: 30s → 60s (less frequent checks)
-   Change target: Try different URL
+   Raise Failover Threshold (e.g. 3 → 5) to tolerate brief outages
+   Change Target URL: Try a different URL
    Disable temporarily: Test if stability improves
    ```
+   The check interval itself is fixed at 60 seconds.
 
 3. **Check Proxy Stability:**
    ```bash
@@ -1338,9 +1475,9 @@ Create rule ABOVE proxy rule:
 **Solutions:**
 
 ```
-Adjust health check interval (less aggressive)
+Raise the Failover Threshold (less aggressive)
 Switch to more stable proxy provider
-Use gateway group with backup proxy
+Configure a backup proxy (or a gateway group)
 Check proxy server capacity/rate limits
 Verify proxy server isn't blocking health check requests
 ```
@@ -1369,22 +1506,23 @@ The plugin automatically adds UDP timeout configuration (300s) for all SOCKS5 co
    ```
    Services → Proxy Gateway → Connections → [Your Tailscale Connection]
 
-   Proxy Type: SOCKS5 (not HTTP/HTTPS)
-   Proxy Server: 192.168.68.87 (your Tailscale proxy IP)
-   Proxy Port: 1055 (or your configured port)
+   Type: SOCKS5 (not HTTP CONNECT)
+   Server: 192.168.20.10 (your Tailscale proxy IP)
+   Port: 1055 (or your configured port)
+   Proxy Server Interface: the interface where that host lives (e.g. LAN2)
    ```
 
-2. **Check DNS Mode:**
+2. **Check Client DNS:**
    ```
-   DNS Settings → Mode: Route through tunnel
-
-   This ensures DNS queries go through the SOCKS5 UDP relay.
+   Clients should query an external resolver (e.g. 1.1.1.1) that is matched
+   by the proxy-gateway rule, so DNS goes through the SOCKS5 UDP relay.
+   See "DNS Leaks" above.
    ```
 
 3. **Verify Tailscale Proxy is Accessible:**
    ```bash
    # From OPNsense shell:
-   nc -zv 192.168.68.87 1055
+   nc -zv 192.168.20.10 1055
    # Should show: Connection succeeded
    ```
 
@@ -1393,8 +1531,8 @@ The plugin automatically adds UDP timeout configuration (300s) for all SOCKS5 co
    # View connection logs:
    tail -f /var/log/proxygateway/<connection_name>.log
 
-   # Look for UDP-related messages
-   # Should see: Added UDP timeout (300s) for SOCKS5 proxy
+   # With Log Level = Debug, look for:
+   # Using UDP timeout (300s) for SOCKS5 proxy
    ```
 
 5. **Test DNS Resolution:**
@@ -1410,26 +1548,24 @@ The plugin automatically adds UDP timeout configuration (300s) for all SOCKS5 co
 ```
 Connection Settings:
   Name: tailscale_proxy
-  Proxy Type: SOCKS5 (required)
-  Proxy Server: 192.168.x.x (Tailscale machine's LAN IP)
-  Proxy Port: 1055 (or your configured port)
+  Proxy Server Interface: interface of the Tailscale machine (e.g. LAN2)
+  Type: SOCKS5 (required)
+  Server: 192.168.x.x (Tailscale machine's LAN IP)
+  Port: 1055 (or your configured port)
   Authentication: Not required (Tailscale handles auth)
 
 Tunnel Settings:
   MTU: 1420 (recommended for Tailscale)
-
-DNS Settings:
-  Mode: Route through tunnel
+  Outbound NAT: checked
 
 Health Check:
-  Enabled: Yes
-  Interval: 30 seconds
-  Target: http://1.1.1.1/ (or leave default)
+  Enable Health Check: Yes (runs every 60 seconds)
+  Target URL: http://1.1.1.1/ (or leave empty for default)
 ```
 
 **Firewall Considerations:**
 
-If you're running Tailscale on a machine in your LAN (e.g., LAN2 at 192.168.68.87) and want devices on another LAN (e.g., LAN3) to use it:
+If you're running Tailscale on a machine in your LAN (e.g., LAN2 at 192.168.20.10) and want devices on another LAN (e.g., LAN3) to use it:
 
 1. **Allow Access to Tailscale Proxy:**
    ```
@@ -1439,7 +1575,7 @@ If you're running Tailscale on a machine in your LAN (e.g., LAN2 at 192.168.68.8
      Action: Pass
      Protocol: TCP/UDP
      Source: LAN3 net
-     Destination: 192.168.68.87 (Tailscale machine)
+     Destination: 192.168.20.10 (Tailscale machine)
      Destination Port: 1055
      Description: Allow access to Tailscale SOCKS5 proxy
    ```
@@ -1451,7 +1587,7 @@ If you're running Tailscale on a machine in your LAN (e.g., LAN2 at 192.168.68.8
      Protocol: any
      Source: LAN3 net (or specific IPs)
      Destination: any
-     Gateway: PROXYGW_tailscale_proxy
+     Gateway: PROXYGW_TAILSCALE_PROXY
      Description: Route LAN3 through Tailscale
    ```
 
@@ -1459,8 +1595,8 @@ If you're running Tailscale on a machine in your LAN (e.g., LAN2 at 192.168.68.8
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| "Packet not handled" in Tailscale logs | UDP relay not working | Verify proxy type is SOCKS5, check plugin version ≥1.1.0 |
-| DNS fails, but can ping IPs | DNS not going through tunnel | Set DNS mode to "Route through tunnel" |
+| "Packet not handled" in Tailscale logs | UDP relay not working | Verify proxy type is SOCKS5, check plugin version ≥1.0.1 |
+| DNS fails, but can ping IPs | DNS not going through tunnel | Point clients at an external resolver routed via the proxy gateway (see "DNS Leaks") |
 | Connection shows UP but no traffic | Firewall blocking proxy access | Add rule allowing access to Tailscale IP:port |
 | Local network works, internet doesn't | Tailscale routing not configured | Check Tailscale exit node configuration |
 | High latency | Tailscale relay path inefficient | Use `tailscale netcheck` to optimize route |
