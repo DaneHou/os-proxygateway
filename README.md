@@ -3,8 +3,8 @@
 [![License: BSD-2-Clause](https://img.shields.io/badge/License-BSD--2--Clause-blue.svg)](LICENSE)
 [![OPNsense](https://img.shields.io/badge/OPNsense-24.7+-orange.svg)](https://opnsense.org/)
 
-An OPNsense plugin that converts SOCKS5 and HTTP/HTTPS proxy servers into
-standard OPNsense gateway interfaces. Route traffic from specific devices,
+An OPNsense plugin that converts SOCKS5, HTTP CONNECT and Shadowsocks proxy
+servers into standard OPNsense gateway interfaces. Route traffic from specific devices,
 VLANs, or subnets through any proxy using firewall rules — no client-side
 configuration required.
 
@@ -30,33 +30,36 @@ LAN Device --> OPNsense Firewall Rule --> pgw_<name> (TUN) --> tun2socks --> Pro
 - **Gateway force-down** — mark gateway offline on consecutive health failures
 - **Speed test** — on-demand and scheduled bandwidth testing through each proxy
 - **Traffic stats & uptime** — real-time per-connection traffic counters and uptime tracking
-- **Kill switch** to drop traffic if the tunnel goes down
 - **Gateway groups** for failover and load balancing
+- **Automatic interface assignment and outbound NAT** for each tunnel
 - **Diagnostics dashboard** with connection status, health history, speed test results, and logs
 - **Web UI** integrated into OPNsense under Services
+- **Hardened backend** — credentials never appear in process listings, runtime files are root-only, tun2socks download is SHA256-verified (see [Security](SECURITY.md))
 
 ## Installation
 
 ```bash
 # SSH to OPNsense as root
-git clone https://github.com/DaneBA/os-proxygateway.git ~/os-proxygateway
+git clone https://github.com/DaneHou/os-proxygateway.git ~/os-proxygateway
 cd ~/os-proxygateway
 make install
 ```
 
-This downloads `tun2socks`, installs all plugin files, clears the menu cache,
-and restarts configd. Hard-refresh your browser (Ctrl+Shift+R) after install.
+This downloads `tun2socks` (verified against a pinned SHA256), installs all
+plugin files, runs model migrations, clears the menu cache, and restarts
+configd. Hard-refresh your browser (Ctrl+Shift+R) after install.
 
 Then go to **Services > Proxy Gateway > Connections**.
 
 ## Quick Start
 
 1. **Add a connection** — click +, fill in proxy server details, save
-2. **Apply changes** — click the Apply button
-3. **Assign the interface** — go to Interfaces > Assignments, add `pgw_<name>`, enable it
-4. **Apply again** — the plugin auto-configures the IP and gateway
-5. **Create a firewall rule** — route a source IP/subnet through `PROXYGW_<NAME>`
-6. **Add outbound NAT** — Firewall > NAT > Outbound, add a rule for the pgw interface to WAN
+2. **Apply changes** — click the Apply button. The plugin starts the tunnel,
+   assigns the `pgw_<name>` interface, creates the `PROXYGW_<NAME>` gateway,
+   and (with "Outbound NAT" on, the default) adds outbound NAT for private
+   source networks
+3. **Create a firewall rule** — on the LAN (or VLAN) interface, set the gateway
+   of a rule matching the source IP/subnet to `PROXYGW_<NAME>`
 
 Optional: configure a **backup proxy** on the connection for automatic failover.
 
@@ -92,7 +95,9 @@ make uninstall
 - Proxy passwords stored in plaintext in `config.xml` (same as other OPNsense credential storage)
 - Userland tunneling limits throughput to ~200 Mbps per connection
 - HTTP CONNECT proxies are TCP-only (use SOCKS5 for UDP)
-- IPv6 not supported
+- SOCKS5 and HTTP CONNECT are unencrypted between OPNsense and the proxy
+  (tun2socks has no TLS transport); use Shadowsocks or a VPN if that path is untrusted
+- IPv6 traffic through the tunnel is not supported
 - Backup proxy must share the same `proxyInterface` as the primary
 
 ## License
