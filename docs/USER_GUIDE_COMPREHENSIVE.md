@@ -346,9 +346,13 @@ This guide will get you routing traffic through a proxy in 5 minutes.
 
 **Type** (Dropdown - Required)
 - `SOCKS5`: Standard SOCKS5 proxy (supports TCP + UDP)
-- `SOCKS5 + TLS`: SOCKS5 with TLS encryption
 - `HTTP CONNECT`: HTTP proxy using CONNECT method (TCP only)
-- `HTTPS CONNECT`: HTTP proxy with TLS (TCP only)
+- `Shadowsocks`: Shadowsocks server (encrypted, optional obfs)
+
+> **Note:** SOCKS5 and HTTP CONNECT are unencrypted between OPNsense and the
+> proxy — credentials and destination hostnames are visible on that path.
+> tun2socks has no TLS transport to the proxy; use Shadowsocks, or run the
+> tunnel over a VPN, if that path is untrusted.
 
 **Server** (Required)
 - Hostname or IP address
@@ -362,7 +366,6 @@ This guide will get you routing traffic through a proxy in 5 minutes.
 - Common ports:
   - SOCKS5: 1080
   - HTTP: 8080, 3128
-  - SSH tunnel: 1080, 8080 (your choice)
 
 **Auth Enabled** (Checkbox)
 - ✓ Required for proxies needing authentication
@@ -440,7 +443,7 @@ This guide will get you routing traffic through a proxy in 5 minutes.
 - ✗ No backup (gateway will be force-down on failure if autoForceDown enabled)
 
 **Backup Type** (Dropdown)
-- Same options as primary proxy type (SOCKS5, SOCKS5+TLS, HTTP, HTTPS)
+- Same options as primary proxy type (SOCKS5, HTTP CONNECT, Shadowsocks)
 
 **Backup Server** (Required if Backup Enabled)
 - Hostname or IP of the backup proxy server
@@ -917,7 +920,7 @@ LAN: 192.168.1.0/24
 1. **Create Proxy Connection:**
    ```
    Name: us
-   Type: SOCKS5 + TLS
+   Type: SOCKS5
    Server: us-proxy.streamingservice.com
    Port: 1080
    Auth: enabled (username/password from service)
@@ -1198,7 +1201,6 @@ Reduce MTU: 1500 → 1420 (if over VPN)
 Increase health check interval: 30s → 60s
 Disable health checks (if stable proxy)
 Use SOCKS5 instead of HTTP (lower overhead)
-Use TLS proxies only when necessary
 ```
 
 ### DNS Leaks

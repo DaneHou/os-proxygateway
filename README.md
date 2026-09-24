@@ -22,7 +22,7 @@ LAN Device --> OPNsense Firewall Rule --> pgw_<name> (TUN) --> tun2socks --> Pro
 
 ## Features
 
-- **Multiple proxy connections** with SOCKS5, SOCKS5+TLS, HTTP, and HTTPS support
+- **Multiple proxy connections** with SOCKS5, HTTP CONNECT, and Shadowsocks support
 - **Auto gateway creation** with `fargw=1` for point-to-point TUN interfaces
 - **Transparent routing** via standard OPNsense firewall rules
 - **Health monitoring** with periodic HTTP-based connectivity checks and history

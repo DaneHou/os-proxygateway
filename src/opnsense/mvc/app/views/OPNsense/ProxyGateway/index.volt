@@ -131,7 +131,7 @@
         }
         $(document).on('change', '#connection\\.backupAuthEnabled', toggleBackupAuthFields);
 
-        // Toggle Shadowsocks/SSH fields based on proxy type
+        // Toggle Shadowsocks fields based on proxy type
         function toggleProtocolFields() {
             var proxyType = $('#connection\\.proxyType').val();
             if (proxyType === 'ss') {
@@ -140,11 +140,6 @@
             } else {
                 $('.ss_fields').closest('tr').hide();
                 $('.ss_obfs_fields').closest('tr').hide();
-            }
-            if (proxyType === 'ssh') {
-                $('.ssh_fields').closest('tr').show();
-            } else {
-                $('.ssh_fields').closest('tr').hide();
             }
         }
         $(document).on('change', '#connection\\.proxyType', toggleProtocolFields);
@@ -159,18 +154,13 @@
         }
         $(document).on('change', '#connection\\.ssObfs', toggleSsObfsFields);
 
-        // Toggle backup SS/SSH fields based on backup proxy type
+        // Toggle backup SS fields based on backup proxy type
         function toggleBackupProtocolFields() {
             var backupType = $('#connection\\.backupProxyType').val();
             if (backupType === 'ss') {
                 $('.backup_ss_fields').closest('tr').show();
             } else {
                 $('.backup_ss_fields').closest('tr').hide();
-            }
-            if (backupType === 'ssh') {
-                $('.backup_ssh_fields').closest('tr').show();
-            } else {
-                $('.backup_ssh_fields').closest('tr').hide();
             }
         }
         $(document).on('change', '#connection\\.backupProxyType', toggleBackupProtocolFields);

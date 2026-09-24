@@ -42,7 +42,7 @@ The plugin handles everything automatically:
 - Registers a gateway (`PROXYGW_<NAME>`) in OPNsense's routing system
 - Syncs interface IPs and gateway entries into `config.xml`
 - Generates anti-routing-loop firewall rules automatically
-- Supports SOCKS5, SOCKS5+TLS, HTTP CONNECT, and HTTPS CONNECT
+- Supports SOCKS5, HTTP CONNECT, and Shadowsocks
 - Handles both TCP and UDP traffic (SOCKS5)
 
 After setup, routing traffic through a proxy is identical to routing through a

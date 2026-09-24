@@ -111,10 +111,6 @@ def run_setup(conn):
         if conn.get("ssObfsHost"):
             cmd.extend(["--ss-obfs-host", conn["ssObfsHost"]])
 
-    # SSH settings
-    if conn.get("proxyType") == "ssh" and conn.get("sshKeyFile"):
-        cmd.extend(["--ssh-key", conn["sshKeyFile"]])
-
     log.info("Starting connection: %s", conn["name"])
     print(f"  Command: {' '.join(cmd)}")  # Safe to print now - no password in args
     result = subprocess.run(cmd, capture_output=True, text=True, env=env)

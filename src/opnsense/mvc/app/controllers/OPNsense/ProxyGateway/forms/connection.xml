@@ -100,18 +100,6 @@
     </field>
     <field>
         <type>header</type>
-        <label>SSH Settings</label>
-        <style>ssh_fields</style>
-    </field>
-    <field>
-        <id>connection.sshKeyFile</id>
-        <label>Private Key File</label>
-        <type>text</type>
-        <style>ssh_fields</style>
-        <help>Path to SSH private key file on the OPNsense filesystem (e.g., /root/.ssh/id_ed25519). Leave empty to use password authentication.</help>
-    </field>
-    <field>
-        <type>header</type>
         <label>Tunnel Settings</label>
     </field>
     <field>
@@ -234,13 +222,6 @@
         <type>password</type>
         <style>backup_ss_fields</style>
         <help>Backup Shadowsocks encryption password.</help>
-    </field>
-    <field>
-        <id>connection.backupSshKeyFile</id>
-        <label>Backup SSH Key File</label>
-        <type>text</type>
-        <style>backup_ssh_fields</style>
-        <help>Path to SSH private key file for the backup proxy.</help>
     </field>
     <field>
         <id>connection.failoverThreshold</id>

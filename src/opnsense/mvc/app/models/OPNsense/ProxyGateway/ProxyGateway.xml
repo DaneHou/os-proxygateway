@@ -1,6 +1,6 @@
 <model>
     <mount>//OPNsense/ProxyGateway</mount>
-    <version>0.4.0</version>
+    <version>0.4.1</version>
     <description>Multi-Proxy Gateway Configuration</description>
 
     <items>
@@ -90,11 +90,8 @@
                     <Required>Y</Required>
                     <OptionValues>
                         <socks5>SOCKS5</socks5>
-                        <socks5tls>SOCKS5 + TLS</socks5tls>
                         <http>HTTP CONNECT</http>
-                        <https>HTTPS CONNECT</https>
                         <ss>Shadowsocks</ss>
-                        <ssh>SSH</ssh>
                     </OptionValues>
                 </proxyType>
 
@@ -158,12 +155,6 @@
                     <ValidationMessage>Enter a valid hostname for obfuscation</ValidationMessage>
                 </ssObfsHost>
 
-                <!-- SSH settings -->
-                <sshKeyFile type="TextField">
-                    <Required>N</Required>
-                    <Mask>/^[\/a-zA-Z0-9._\-]{0,256}$/D</Mask>
-                    <ValidationMessage>Enter a valid file path for the SSH private key</ValidationMessage>
-                </sshKeyFile>
 
                 <!-- Local tunnel settings -->
                 <tunAddress type="TextField">
@@ -222,11 +213,8 @@
                     <Required>N</Required>
                     <OptionValues>
                         <socks5>SOCKS5</socks5>
-                        <socks5tls>SOCKS5 + TLS</socks5tls>
                         <http>HTTP CONNECT</http>
-                        <https>HTTPS CONNECT</https>
                         <ss>Shadowsocks</ss>
-                        <ssh>SSH</ssh>
                     </OptionValues>
                 </backupProxyType>
                 <backupProxyServer type="TextField">
@@ -268,11 +256,6 @@
                     <Mask>/^[\x20-\x7E]{0,128}$/D</Mask>
                     <ValidationMessage>Backup Shadowsocks password: 0-128 printable ASCII characters</ValidationMessage>
                 </backupSsPassword>
-                <backupSshKeyFile type="TextField">
-                    <Required>N</Required>
-                    <Mask>/^[\/a-zA-Z0-9._\-]{0,256}$/D</Mask>
-                    <ValidationMessage>Enter a valid file path for the backup SSH private key</ValidationMessage>
-                </backupSshKeyFile>
                 <failoverThreshold type="IntegerField">
                     <default>3</default>
                     <MinimumValue>1</MinimumValue>

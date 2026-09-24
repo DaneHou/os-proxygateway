@@ -417,10 +417,8 @@ function proxygateway_generate_desired($mdl = null)
             'ssPassword'          => (string)$conn->ssPassword,
             'ssObfs'              => (string)$conn->ssObfs,
             'ssObfsHost'          => (string)$conn->ssObfsHost,
-            'sshKeyFile'          => (string)$conn->sshKeyFile,
             'backupSsMethod'      => (string)$conn->backupSsMethod,
             'backupSsPassword'    => (string)$conn->backupSsPassword,
-            'backupSshKeyFile'    => (string)$conn->backupSshKeyFile,
         ];
     }
 
