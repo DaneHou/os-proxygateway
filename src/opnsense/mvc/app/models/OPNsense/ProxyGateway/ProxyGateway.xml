@@ -40,15 +40,6 @@
                     <m60>60 minutes</m60>
                 </OptionValues>
             </speedTestInterval>
-            <speedTestSize type="OptionField">
-                <default>s10m</default>
-                <OptionValues>
-                    <s1m>1 MB (~1 MB download)</s1m>
-                    <s5m>5 MB</s5m>
-                    <s10m>10 MB (default)</s10m>
-                    <s25m>25 MB</s25m>
-                </OptionValues>
-            </speedTestSize>
             <autoForceDown type="BooleanField">
                 <default>1</default>
                 <Required>Y</Required>
@@ -198,11 +189,6 @@
                     <Mask>/^(https?:\/\/[^\s]{1,256})?$/D</Mask>
                     <ValidationMessage>Enter a valid HTTP or HTTPS URL for speed testing</ValidationMessage>
                 </speedTestUrl>
-                <speedTestUrlDomestic type="TextField">
-                    <Required>N</Required>
-                    <Mask>/^(https?:\/\/[^\s]{1,256})?$/D</Mask>
-                    <ValidationMessage>Enter a valid HTTP or HTTPS URL for domestic speed testing</ValidationMessage>
-                </speedTestUrlDomestic>
 
                 <!-- Backup proxy for failover -->
                 <backupEnabled type="BooleanField">

@@ -2,7 +2,7 @@
 
 ## What This Project Is
 
-os-proxygateway is an OPNsense plugin that converts SOCKS5 and HTTP/HTTPS proxy servers into standard OPNsense gateway interfaces using tun2socks. Users route traffic through proxies via firewall rules — no client-side configuration needed.
+os-proxygateway is an OPNsense plugin that converts SOCKS5, HTTP CONNECT and Shadowsocks proxy servers into standard OPNsense gateway interfaces using tun2socks. Users route traffic through proxies via firewall rules — no client-side configuration needed.
 
 ## Target Environment
 
@@ -49,7 +49,7 @@ src/
 │   │   ├── gateway_force_down.php       # Set gateway force_down via OPNsense Config API
 │   │   ├── speedtest.sh                # Run speed test through proxy
 │   │   ├── speedtest_cron.sh           # Cron wrapper for speed test
-│   │   ├── generate_desired.php         # Legacy desired.json generator
+│   │   ├── generate_desired.php         # desired.json generator used by rc.d at boot
 │   │   ├── clear_logs.sh               # Log cleanup
 │   │   ├── lib/logging.sh              # Shared logging functions
 │   │   └── lib/common.sh               # Name validation, conf_get, shell/URL quoting, lock path
@@ -72,16 +72,21 @@ src/
 - `monitor_disable=1` because SOCKS5 doesn't support ICMP (dpinger fails)
 - Gateway naming: `PROXYGW_` prefix + uppercase connection name
 
-### Failover System (v0.4.0)
+### Failover System (plugin 1.1+, model 0.4.x)
 - `watchdog.py` runs every 60s via cron, checks PID + health for each connection
 - Failover state stored in `/var/run/proxygateway/{name}.failover` (JSON)
 - On consecutive health failures ≥ threshold: switch to backup proxy or force-down gateway
+- force_down is tracked in the .failover state and cleared automatically once healthy again
 - `gateway_force_down.php` modifies `config.xml` gateway `force_down` field
 - 5-minute cooldown after switch to prevent rapid flapping
 - Primary probe runs independently (curl directly to primary proxy, not through TUN)
 
+### Versions
+- Plugin version: `PLUGIN_VERSION` in `Makefile` (CHANGELOG headings use it)
+- Model schema version: `<version>` in `ProxyGateway.xml`; bump it and add `Migrations/M<x>_<y>_<z>.php` when fields/options change
+
 ### Runtime Files
-- `/var/run/proxygateway/` — PID files, .conf files, .failover state, desired.json
+- `/var/run/proxygateway/` — PID files, .conf files, .t2s.yaml (tun2socks config, 0600), .failover state, desired.json
 - `/var/log/proxygateway/` — Per-connection logs, health history, speed test results
 
 ## Code Style

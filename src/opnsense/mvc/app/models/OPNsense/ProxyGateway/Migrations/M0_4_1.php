@@ -18,6 +18,8 @@ class M0_4_1 extends BaseModelMigration
      *   and the connection (or its backup) is disabled so it cannot start
      *   against an SSH server by accident.
      * - connection.sshKeyFile / backupSshKeyFile were removed.
+     * - Unused general.speedTestSize and connection.speedTestUrlDomestic
+     *   were removed (the UI dropped them earlier).
      */
     public function run($model)
     {

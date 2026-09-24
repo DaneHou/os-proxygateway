@@ -4,9 +4,8 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.4.x   | Yes                |
-| 1.0.x   | Yes                |
-| < 1.0   | No                 |
+| 1.2.x   | Yes                |
+| < 1.2   | No                 |
 
 Only the latest release receives security fixes. Upgrade to the latest version
 by running `git pull && make install` on your OPNsense system.
@@ -16,7 +15,7 @@ by running `git pull && make install` on your OPNsense system.
 **Do not open public GitHub issues for security vulnerabilities.**
 
 Report security issues through
-[GitHub Security Advisories](https://github.com/DaneBA/os-proxygateway/security/advisories/new).
+[GitHub Security Advisories](https://github.com/DaneHou/os-proxygateway/security/advisories/new).
 
 When reporting, please include:
 

@@ -1,6 +1,24 @@
 # Changelog
 
-## [Unreleased]
+Plugin versions (Makefile `PLUGIN_VERSION`) are listed here. The MVC model
+schema has its own version (`ProxyGateway.xml`), noted where it changed.
+
+## [1.2.0] - 2026-09-24
+
+Model schema 0.4.1 (migration M0_4_1). The first Apply after upgrading
+restarts every running tunnel once, so it is rewritten in the new runtime
+format.
+
+### Added
+
+- **Automatic outbound NAT** — per-connection "Outbound NAT" toggle (default: on) registers SNAT rules for RFC1918 sources on each `pgw_*` interface, replacing the manual NAT step.
+- **route-to self-healing** — the watchdog reloads the filter when policy-routing rules have lost their `route-to` after a gateway bounce.
+
+### Changed
+
+- **Speed test simplified** — one test URL per connection (default: Tele2 10 MB file, since Cloudflare's endpoint can return a JS challenge). The unused "test file size" and "domestic URL" settings are gone.
+- **Hot-updated settings** — health check target, speed test URL and backup settings take effect on Apply without restarting the tunnel.
+- **Restart detection** — a connection restarts on Apply when any restart-relevant setting changes (including passwords, MTU and tunnel address, which were previously ignored).
 
 ### Security
 
@@ -12,9 +30,11 @@
 - **desired.json** (all passwords in plaintext) is written with umask 077 and atomically replaced.
 - **Removed misleading proxy types** — "SOCKS5 + TLS" and "HTTPS CONNECT" silently connected in plaintext (tun2socks has no TLS transport to the proxy), and "SSH" never worked (tun2socks rejects the scheme). Migration M0_4_1 maps `socks5tls → socks5` and `https → http` (no behaviour change) and turns `ssh` into a disabled socks5 connection/backup. The SSH key file fields are removed.
 - `make activate` and the package post-install now run model migrations.
+- File headers and LICENSE name "os-proxygateway contributors" as copyright holder; repository links point to `github.com/DaneHou/os-proxygateway`.
 
 ### Fixed
 
+- **Speed test "Parameter mismatch"** — configd parameters now match the action definition.
 - **Failover never ran while processes were alive** — `watchdog.sh` only invoked `watchdog.py` when a PID was dead, so health-based failover and force-down never triggered in the common case (proxy down, tun2socks alive).
 - **Gateway stayed force-down forever** — nothing cleared `force_down` after recovery. The watchdog now tracks it and brings the gateway back up once healthy, and no longer rewrites config.xml every minute while down.
 - **Every Apply restarted every tunnel** — `connection_changed` compared `backupEnabled="0"` against a missing key. Change detection now uses a hash of all restart-relevant settings, which also picks up password/MTU/tunnel address changes that were previously ignored.
@@ -25,7 +45,9 @@
 - Speed test for Shadowsocks connections used a socks5 URL against the ss server; it now goes through the TUN interface.
 - Anti-loop firewall rules for IPv6 proxy servers used `inet` and a bracketed address, breaking the pf ruleset.
 
-## [0.4.0] - 2026-03-08
+## [1.1.0] - 2026-03-08
+
+Model schema 0.4.0.
 
 ### Added
 
