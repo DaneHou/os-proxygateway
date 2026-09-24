@@ -135,7 +135,7 @@
         <label>Target URL</label>
         <type>text</type>
         <style>health_fields</style>
-        <help>URL to probe for health checks. Must return HTTP 200/204. Leave empty for default (http://1.1.1.1/).</help>
+        <help>URL fetched through the proxy for health checks. Any HTTP response counts as healthy; only a timeout or connection failure counts as a failure. Leave empty for default (http://1.1.1.1/).</help>
     </field>
     <field>
         <type>header</type>
