@@ -106,7 +106,7 @@ class DiagnosticsController extends ApiControllerBase
         if ($this->request->isPost()) {
             $name = $this->request->getPost('name');
 
-            if (empty($name) || !preg_match('/^[a-zA-Z0-9_]{1,16}$/', $name)) {
+            if (empty($name) || !preg_match('/^[a-zA-Z0-9_]{1,16}$/D', $name)) {
                 return ['status' => 'failed', 'message' => 'Connection name is required'];
             }
 
@@ -130,7 +130,7 @@ class DiagnosticsController extends ApiControllerBase
     public function getLogsAction()
     {
         $name = $this->request->get('name', null, '');
-        if (!empty($name) && !preg_match('/^[a-zA-Z0-9_]{1,16}$/', $name)) {
+        if (!empty($name) && !preg_match('/^[a-zA-Z0-9_]{1,16}$/D', $name)) {
             return ['status' => 'failed', 'message' => 'Invalid connection name'];
         }
         $lines = (int)$this->request->get('lines', null, 50);
@@ -198,7 +198,7 @@ class DiagnosticsController extends ApiControllerBase
         if ($this->request->isPost()) {
             $name = $this->request->getPost('name', null, '');
 
-            if (!empty($name) && !preg_match('/^[a-zA-Z0-9_]{1,16}$/', $name)) {
+            if (!empty($name) && !preg_match('/^[a-zA-Z0-9_]{1,16}$/D', $name)) {
                 return ['status' => 'failed', 'message' => 'Invalid connection name'];
             }
 
@@ -333,7 +333,7 @@ class DiagnosticsController extends ApiControllerBase
     public function getSpeedTestHistoryAction()
     {
         $name = $this->request->get('name', null, '');
-        if (empty($name) || !preg_match('/^[a-zA-Z0-9_]{1,16}$/', $name)) {
+        if (empty($name) || !preg_match('/^[a-zA-Z0-9_]{1,16}$/D', $name)) {
             return ['status' => 'failed', 'message' => 'Valid connection name is required'];
         }
 
@@ -365,7 +365,7 @@ class DiagnosticsController extends ApiControllerBase
     public function getHealthHistoryAction()
     {
         $name = $this->request->get('name', null, '');
-        if (empty($name) || !preg_match('/^[a-zA-Z0-9_]{1,16}$/', $name)) {
+        if (empty($name) || !preg_match('/^[a-zA-Z0-9_]{1,16}$/D', $name)) {
             return ['status' => 'failed', 'message' => 'Valid connection name is required'];
         }
 
@@ -401,7 +401,7 @@ class DiagnosticsController extends ApiControllerBase
         if ($this->request->isPost()) {
             $name = $this->request->getPost('name');
 
-            if (empty($name) || !preg_match('/^[a-zA-Z0-9_]{1,16}$/', $name)) {
+            if (empty($name) || !preg_match('/^[a-zA-Z0-9_]{1,16}$/D', $name)) {
                 return ['status' => 'failed', 'message' => 'Connection name is required'];
             }
 

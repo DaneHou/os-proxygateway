@@ -8,13 +8,15 @@ Reads /var/run/proxygateway/desired.json for enabled connections,
 checks if their tun2socks process is alive, and restarts dead ones.
 """
 
-import glob
 import json
 import logging
 import os
 import subprocess
 import sys
 import time
+import urllib.parse
+
+import pgwconf
 
 RUNDIR = "/var/run/proxygateway"
 LOGDIR = "/var/log/proxygateway"
@@ -91,7 +93,9 @@ def restart_connection(conn):
     name = conn["name"]
     log.info("Restarting dead connection: %s", name)
 
-    # Clean up stale files before restart
+    # Clean up stale files before restart. setup.sh starts on the primary
+    # proxy, so drop any failover state from before the crash as well.
+    pgwconf.clear_failover_state(name)
     for ext in (".pid", ".conf", ".tundev", ".status"):
         stale = os.path.join(RUNDIR, f"{name}{ext}")
         if os.path.isfile(stale):
@@ -154,12 +158,8 @@ def restart_connection(conn):
 
     log.info("Restarted %s successfully", name)
 
-    # Save health check config (same as reconfigure.py does)
-    conf_file = os.path.join(RUNDIR, f"{name}.conf")
-    target = conn.get("healthCheckTarget", "")
-    if os.path.isfile(conf_file) and target:
-        with open(conf_file, "a") as f:
-            f.write(f'HEALTH_TARGET="{target}"\n')
+    # Restore health check / backup settings (same as reconfigure.py does)
+    pgwconf.write_extra_config(conn)
 
     return True
 
@@ -173,6 +173,7 @@ def load_failover_state(name):
         "switched_at": None,
         "switch_count": 0,
         "primary_probe_ok_count": 0,
+        "forced_down": False,
     }
     if not os.path.isfile(state_file):
         return default
@@ -188,34 +189,45 @@ def load_failover_state(name):
 
 
 def save_failover_state(name, state):
-    """Save failover state to JSON file."""
+    """Save failover state to JSON file (atomically, so readers never see
+    a half-written file)."""
     state_file = os.path.join(RUNDIR, f"{name}.failover")
-    with open(state_file, "w") as f:
+    tmp = f"{state_file}.tmp"
+    with open(tmp, "w") as f:
         json.dump(state, f, indent=2)
+    os.replace(tmp, state_file)
 
 
 def probe_proxy_directly(conn, proxy_type, server, port, auth_user="", auth_pass=""):
     """Probe a proxy server directly (not through TUN) using curl --proxy."""
-    # Build proxy URL
     if proxy_type in ("socks5", "socks5tls"):
         scheme = "socks5h"
-    else:
+    elif proxy_type in ("http", "https"):
         scheme = "http"
-
-    if auth_user and auth_pass:
-        proxy_url = f"{scheme}://{auth_user}:{auth_pass}@{server}:{port}"
     else:
-        proxy_url = f"{scheme}://{server}:{port}"
+        # curl cannot speak Shadowsocks, so there is no direct probe
+        log.debug("No direct probe available for proxy type %s", proxy_type)
+        return False
+
+    userinfo = ""
+    if auth_user and auth_pass:
+        userinfo = (urllib.parse.quote(auth_user, safe="") + ":"
+                    + urllib.parse.quote(auth_pass, safe="") + "@")
+    proxy_url = f"{scheme}://{userinfo}{server}:{port}"
 
     target = conn.get("healthCheckTarget", "") or "http://1.1.1.1/"
 
+    # Pass the proxy URL through a curl config on stdin so the credentials
+    # don't show up in ps(1) output. Escape for curl's quoted-string syntax.
+    curl_cfg = 'proxy = "%s"\n' % proxy_url.replace("\\", "\\\\").replace('"', '\\"')
+
     try:
         result = subprocess.run(
-            ["/usr/local/bin/curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-             "--proxy", proxy_url,
+            ["/usr/local/bin/curl", "-K", "-", "-s", "-o", "/dev/null",
+             "-w", "%{http_code}",
              "--connect-timeout", "10", "--max-time", "10",
-             target],
-            capture_output=True, text=True, timeout=15
+             "--", target],
+            input=curl_cfg, capture_output=True, text=True, timeout=15
         )
         http_code = result.stdout.strip()
         return http_code != "000" and http_code != ""
@@ -307,13 +319,8 @@ def switch_proxy(name, conn, to_backup):
         log.error("Setup failed for %s during switch: %s", name, result.stderr.strip())
         return False
 
-    # Save health check config to .conf
-    conf_file = os.path.join(RUNDIR, f"{name}.conf")
-    if os.path.isfile(conf_file):
-        with open(conf_file, "a") as f:
-            target = conn.get("healthCheckTarget", "")
-            if target:
-                f.write(f'HEALTH_TARGET="{target}"\n')
+    # Restore health check / backup settings; setup.sh rewrote the .conf
+    pgwconf.write_extra_config(conn)
 
     # Reconfigure routes
     subprocess.run(
@@ -326,19 +333,40 @@ def switch_proxy(name, conn, to_backup):
 
 
 def force_down_gateway(name, down):
-    """Set or clear force_down on a proxy gateway via configd."""
+    """Set or clear force_down on a proxy gateway via configd.
+
+    Returns True on success.
+    """
     action = "down" if down else "up"
     try:
         result = subprocess.run(
             ["/usr/local/sbin/configctl", "proxygateway", "forcedown", name, action],
             capture_output=True, text=True, timeout=30
         )
-        if result.returncode == 0:
-            log.info("Gateway force_%s for %s: OK", action, name)
-        else:
-            log.error("Gateway force_%s for %s failed: %s", action, name, result.stderr.strip())
     except subprocess.TimeoutExpired:
         log.error("Gateway force_%s for %s timed out", action, name)
+        return False
+    # configctl exits 0 even when the script reports an error in its JSON
+    try:
+        ok = result.returncode == 0 and json.loads(result.stdout).get("status") == "ok"
+    except ValueError:
+        ok = False
+    if ok:
+        log.info("Gateway force_%s for %s: OK", action, name)
+    else:
+        log.error("Gateway force_%s for %s failed: %s", action, name,
+                  (result.stdout or result.stderr).strip())
+    return ok
+
+
+def set_forced_down(name, state, down):
+    """Force the gateway down/up once and remember it in the failover state,
+    so we neither repeat the config.xml write every minute nor forget to
+    bring the gateway back when the connection recovers."""
+    if state.get("forced_down") == down:
+        return
+    if force_down_gateway(name, down):
+        state["forced_down"] = down
 
 
 def check_failover(name, conn, health_ok):
@@ -355,10 +383,13 @@ def check_failover(name, conn, health_ok):
     failback = conn.get("failbackEnabled", "1") == "1"
     now = int(time.time())
 
-    # Check for reconfigure lock — skip failover during reconfigure
-    if os.path.isfile(os.path.join(RUNDIR, "reconfigure.lock")):
-        log.debug("Reconfigure in progress, skipping failover check for %s", name)
-        return
+    # Mutual exclusion with reconfigure is handled by the lockf(1) lock
+    # taken in watchdog.sh / reconfigure.sh.
+
+    # The active proxy works again: undo an earlier force-down
+    if health_ok and state.get("forced_down"):
+        log.info("%s: healthy again, clearing gateway force_down", name)
+        set_forced_down(name, state, False)
 
     if state["active_proxy"] == "primary":
         if not health_ok:
@@ -380,18 +411,16 @@ def check_failover(name, conn, health_ok):
                     else:
                         log.error("%s: failed to switch to backup", name)
                         if auto_force_down:
-                            force_down_gateway(name, True)
-                elif auto_force_down:
+                            set_forced_down(name, state, True)
+                elif auto_force_down and not state.get("forced_down"):
                     # No backup — force down the gateway
-                    force_down_gateway(name, True)
+                    set_forced_down(name, state, True)
                     log.info("%s: no backup configured, gateway forced down", name)
         else:
             if state["consecutive_failures"] > 0:
                 log.info("%s: primary recovered after %d failures",
                         name, state["consecutive_failures"])
             state["consecutive_failures"] = 0
-            # If gateway was forced down, bring it back up
-            # (check force_down state file)
 
     elif state["active_proxy"] == "backup":
         if not health_ok:
@@ -410,7 +439,7 @@ def check_failover(name, conn, health_ok):
                     state["primary_probe_ok_count"] = 0
                 else:
                     if auto_force_down:
-                        force_down_gateway(name, True)
+                        set_forced_down(name, state, True)
         else:
             state["consecutive_failures"] = 0
 

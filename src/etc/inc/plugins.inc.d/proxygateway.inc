@@ -173,6 +173,24 @@ function proxygateway_interfaces()
 }
 
 /**
+ * Normalise a proxy server address for use in a pf rule.
+ *
+ * The model accepts IPv6 in URL form ("[2001:db8::1]"); pf needs it without
+ * brackets and with inet6, otherwise the generated ruleset fails to load.
+ *
+ * @param string $server proxy server as stored in the model
+ * @return array [address, ipprotocol]
+ */
+function proxygateway_rule_address($server)
+{
+    $bare = trim($server, '[]');
+    if (filter_var($bare, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false) {
+        return [$bare, 'inet6'];
+    }
+    return [$server, 'inet'];
+}
+
+/**
  * Firewall integration hook.
  *
  * Generates automatic firewall rules for proxy gateway connections:
@@ -194,14 +212,14 @@ function proxygateway_firewall(\OPNsense\Firewall\Plugin $fw)
 
         $name = (string)$conn->name;
         $ifname = "pgw_{$name}";
-        $proxyServer = (string)$conn->proxyServer;
+        list($proxyServer, $proxyProto) = proxygateway_rule_address((string)$conn->proxyServer);
         $proxyPort = (string)$conn->proxyPort;
 
         // Rule 1: Anti-routing-loop
         $fw->registerFilterRule(
             1,
             [
-                'ipprotocol' => 'inet',
+                'ipprotocol' => $proxyProto,
                 'protocol'   => 'tcp',
                 'from'       => '(self)',
                 'to'         => $proxyServer,
@@ -216,12 +234,12 @@ function proxygateway_firewall(\OPNsense\Firewall\Plugin $fw)
 
         // Rule 1b: Anti-routing-loop for backup proxy server
         if (!empty((string)$conn->backupEnabled) && !empty((string)$conn->backupProxyServer)) {
-            $backupServer = (string)$conn->backupProxyServer;
+            list($backupServer, $backupProto) = proxygateway_rule_address((string)$conn->backupProxyServer);
             $backupPort = (string)$conn->backupProxyPort;
             $fw->registerFilterRule(
                 1,
                 [
-                    'ipprotocol' => 'inet',
+                    'ipprotocol' => $backupProto,
                     'protocol'   => 'tcp',
                     'from'       => '(self)',
                     'to'         => $backupServer,
@@ -411,11 +429,18 @@ function proxygateway_generate_desired($mdl = null)
         JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
     );
 
+    // desired.json contains every proxy password in plaintext: create it
+    // 0600 from the start (umask) and swap it in atomically so the watchdog
+    // never reads a half-written file.
     @mkdir('/var/run/proxygateway', 0750, true);
+    @chmod('/var/run/proxygateway', 0750);
     $desiredFile = '/var/run/proxygateway/desired.json';
-    file_put_contents($desiredFile, $configJson);
-    chmod($desiredFile, 0600);
-    chown($desiredFile, 'root');
+    $tmpFile = $desiredFile . '.tmp';
+    $oldUmask = umask(0077);
+    file_put_contents($tmpFile, $configJson);
+    umask($oldUmask);
+    chmod($tmpFile, 0600);
+    rename($tmpFile, $desiredFile);
 
     // Manage watchdog flag file — watchdog.sh checks this to avoid PHP overhead
     $watchdogFlag = '/var/run/proxygateway/watchdog.enabled';

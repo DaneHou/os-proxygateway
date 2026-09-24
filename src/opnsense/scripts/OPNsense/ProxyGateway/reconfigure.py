@@ -15,6 +15,8 @@ import subprocess
 import sys
 import time
 
+import pgwconf
+
 RUNDIR = "/var/run/proxygateway"
 LOGDIR = "/var/log/proxygateway"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -54,23 +56,14 @@ log = logging.getLogger("reconfig")
 def get_running_connections():
     """Get dict of currently running connections from .conf files."""
     running = {}
-    conf_dir = RUNDIR
-    if not os.path.isdir(conf_dir):
+    if not os.path.isdir(RUNDIR):
         return running
 
-    for entry in sorted(os.listdir(conf_dir)):
+    for entry in sorted(os.listdir(RUNDIR)):
         if not entry.endswith(".conf"):
             continue
-        conf_path = os.path.join(conf_dir, entry)
-        name = entry.replace(".conf", "")
-        config = {}
-        with open(conf_path) as f:
-            for line in f:
-                line = line.strip()
-                if "=" in line:
-                    key, val = line.split("=", 1)
-                    config[key] = val.strip('"')
-        running[name] = config
+        name = entry[:-len(".conf")]
+        running[name] = pgwconf.read_conf(os.path.join(RUNDIR, entry))
     return running
 
 
@@ -142,59 +135,8 @@ def run_setup(conn):
 
 
 def save_extra_config(conn):
-    """Write health check, speed test, and backup settings to the .conf file.
-
-    These settings can be hot-updated without restarting the connection.
-    Called both after setup and for unchanged connections on every reconfigure,
-    so that URL/threshold changes take effect immediately.
-
-    Rewrites the "extra" section (everything after the EXTRA_CONFIG marker)
-    while preserving the core settings written by setup.sh.
-    """
-    name = conn["name"]
-    conf_file = os.path.join(RUNDIR, f"{name}.conf")
-    if not os.path.isfile(conf_file):
-        return
-
-    marker = "# --- EXTRA_CONFIG ---"
-
-    # Read existing file, keep everything before the marker
-    with open(conf_file) as f:
-        lines = f.readlines()
-
-    core_lines = []
-    for line in lines:
-        if line.strip() == marker:
-            break
-        core_lines.append(line)
-
-    # Rebuild extra section
-    extra = [f"{marker}\n"]
-
-    target = conn.get("healthCheckTarget", "")
-    if target:
-        extra.append(f'HEALTH_TARGET="{target}"\n')
-
-    speed_url = conn.get("speedTestUrl", "")
-    if speed_url:
-        extra.append(f'SPEED_TEST_URL="{speed_url}"\n')
-
-    # Backup proxy config
-    if conn.get("backupEnabled") == "1":
-        extra.append(f'BACKUP_ENABLED="1"\n')
-        extra.append(f'BACKUP_PROXY_TYPE="{conn.get("backupProxyType", "socks5")}"\n')
-        extra.append(f'BACKUP_PROXY_SERVER="{conn.get("backupProxyServer", "")}"\n')
-        extra.append(f'BACKUP_PROXY_PORT="{conn.get("backupProxyPort", "1080")}"\n')
-        if conn.get("backupAuthEnabled") == "1":
-            extra.append(f'BACKUP_AUTH_ENABLED="1"\n')
-            extra.append(f'BACKUP_AUTH_USER="{conn.get("backupAuthUser", "")}"\n')
-            extra.append(f'BACKUP_AUTH_PASS="{conn.get("backupAuthPass", "")}"\n')
-        extra.append(f'FAILOVER_THRESHOLD="{conn.get("failoverThreshold", "3")}"\n')
-        extra.append(f'FAILBACK_ENABLED="{conn.get("failbackEnabled", "1")}"\n')
-
-    with open(conf_file, "w") as f:
-        f.writelines(core_lines)
-        f.writelines(extra)
+    """Hot-update health check, speed test and backup settings in the .conf."""
+    pgwconf.write_extra_config(conn)
 
 
 def run_healthcheck(conn):
@@ -202,7 +144,7 @@ def run_healthcheck(conn):
 
     Tests actual proxy connectivity by sending traffic through the proxy.
     The target URL is read from the .conf file by healthcheck.sh (written
-    by save_healthcheck_config), so we don't pass it as an argument.
+    by save_extra_config), so we don't pass it as an argument.
     """
     name = conn["name"]
     cmd = ["/bin/sh", HEALTHCHECK_SCRIPT, name]
@@ -241,29 +183,13 @@ def run_teardown(name):
 
 
 def connection_changed(desired, running_config):
-    """Check if a connection's config has changed vs. running state."""
-    checks = [
-        ("proxyType", "PROXY_TYPE"),
-        ("proxyServer", "PROXY_ADDR"),
-        ("proxyPort", "PROXY_PORT"),
-        ("proxyInterface", "PROXY_IFACE"),
-    ]
-    for desired_key, running_key in checks:
-        if str(desired.get(desired_key, "")) != str(running_config.get(running_key, "")):
-            return True
+    """Check if a connection needs a restart to apply the desired config.
 
-    # Also check backup proxy changes
-    backup_checks = [
-        ("backupEnabled", "BACKUP_ENABLED"),
-        ("backupProxyType", "BACKUP_PROXY_TYPE"),
-        ("backupProxyServer", "BACKUP_PROXY_SERVER"),
-        ("backupProxyPort", "BACKUP_PROXY_PORT"),
-    ]
-    for desired_key, running_key in backup_checks:
-        if str(desired.get(desired_key, "")) != str(running_config.get(running_key, "")):
-            return True
-
-    return False
+    Compares a fingerprint of all restart-relevant settings (including
+    credentials and backup proxy). A .conf without a fingerprint was written
+    by an older version, so restart it once to pick up the current format.
+    """
+    return running_config.get("CONFIG_HASH") != pgwconf.config_hash(desired)
 
 
 def main():
@@ -328,13 +254,16 @@ def main():
             log.info("Config changed for '%s' — will restart", name)
             to_restart.add(name)
 
-    # Execute: stop removed/changed connections
+    # Execute: stop removed/changed connections. A restarted connection comes
+    # back on the primary proxy, so its failover state is reset too.
     for name in sorted(to_stop | to_restart):
         run_teardown(name)
+        pgwconf.clear_failover_state(name)
 
     # Execute: start new/changed connections, then verify connectivity
     started = []
     for name in sorted(to_start | to_restart):
+        pgwconf.clear_failover_state(name)
         if run_setup(desired[name]) == 0:
             started.append(name)
             save_extra_config(desired[name])

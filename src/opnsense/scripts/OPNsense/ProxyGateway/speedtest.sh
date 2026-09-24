@@ -14,6 +14,7 @@ LOGDIR="/var/log/proxygateway"
 
 # Source structured logging library
 . "${SCRIPT_DIR}/lib/logging.sh"
+. "${SCRIPT_DIR}/lib/common.sh"
 
 # Default test URL (~10MB, no browser verification)
 DEFAULT_URL="http://speedtest.tele2.net/10MB.zip"
@@ -28,8 +29,8 @@ if [ -z "$NAME" ]; then
 fi
 
 # Validate name
-echo "$NAME" | grep -qE '^[a-zA-Z0-9_]{1,16}$' || {
-    echo "ERROR: Invalid connection name: $NAME"
+pgw_valid_name "$NAME" || {
+    echo "ERROR: Invalid connection name"
     exit 1
 }
 
@@ -52,12 +53,24 @@ EOF
     exit 1
 fi
 
-. "$CONFFILE"
+# Read only the keys we need — never source the .conf (user-controlled values)
+IFACE=$(conf_get IFACE "$CONFFILE")
+PROXY_TYPE=$(conf_get PROXY_TYPE "$CONFFILE")
+PROXY_URL=$(conf_get PROXY_URL "$CONFFILE")
+SPEED_TEST_URL=$(conf_get SPEED_TEST_URL "$CONFFILE")
+IFACE="${IFACE:-pgw_${NAME}}"
 
 # Determine test URL (from .conf or default)
 if [ -z "$TEST_URL" ]; then
     TEST_URL="${SPEED_TEST_URL:-$DEFAULT_URL}"
 fi
+case "$TEST_URL" in
+    http://*|https://*) ;;
+    *) log_error "Speed test URL must be an http(s) URL"; exit 1 ;;
+esac
+case "$TIMEOUT" in
+    ''|*[!0-9]*) TIMEOUT=60 ;;
+esac
 
 # Check if tun2socks process is alive
 if [ -f "${RUNDIR}/${NAME}.pid" ]; then
@@ -81,25 +94,24 @@ EOF
     exit 1
 fi
 
-# Build curl proxy URL (same logic as healthcheck.sh)
+# Build curl proxy settings (same logic as healthcheck.sh). curl can't speak
+# Shadowsocks, so for ss go through the TUN interface instead.
 case "$PROXY_TYPE" in
-    socks5|socks5tls) CURL_PROXY="socks5h${PROXY_URL#socks5}" ;;
-    http|https)       CURL_PROXY="$PROXY_URL" ;;
-    *)                CURL_PROXY="socks5h${PROXY_URL#socks5}" ;;
+    socks5|socks5tls) CURL_CFG="proxy = \"$(pgw_curl_cfg_escape "socks5h${PROXY_URL#socks5}")\"" ;;
+    http|https)       CURL_CFG="proxy = \"$(pgw_curl_cfg_escape "$PROXY_URL")\"" ;;
+    *)                CURL_CFG="interface = \"$(pgw_curl_cfg_escape "$IFACE")\"" ;;
 esac
 
-CURL_PROXY_LOG=$(echo "$CURL_PROXY" | sed 's|://[^@]*@|://***@|')
+log_info "Speed test starting: url=${TEST_URL} via ${PROXY_TYPE}"
 
-log_info "Speed test starting: url=${TEST_URL} via ${CURL_PROXY_LOG}"
-
-# Run the download and capture metrics
+# Run the download and capture metrics. Proxy settings come from a curl
+# config on stdin so credentials don't appear in ps(1) output.
 # %{speed_download} = average bytes/sec, %{size_download} = total bytes, %{time_total} = seconds
-CURL_OUTPUT=$(curl -s -o /dev/null \
+CURL_OUTPUT=$(printf '%s\n' "$CURL_CFG" | curl -K - -s -o /dev/null \
     -w "%{speed_download}\n%{size_download}\n%{time_total}\n%{http_code}" \
-    --proxy "$CURL_PROXY" \
     --connect-timeout 15 \
     --max-time "$TIMEOUT" \
-    "$TEST_URL" 2>/dev/null)
+    -- "$TEST_URL" 2>/dev/null)
 CURL_EXIT=$?
 
 TIMESTAMP=$(date +%s)
@@ -145,12 +157,13 @@ http_code=${HTTP_CODE}
 timestamp=${TIMESTAMP}
 EOF
 
-# Append to history log as JSON-line
+# Append to history log as JSON-line (escape the URL for JSON)
 mkdir -p "$LOGDIR"
+TEST_URL_JSON=$(printf '%s' "$TEST_URL" | sed 's/[\\"]/\\&/g')
 printf '{"timestamp":%s,"name":"%s","status":"%s","speed_bps":%s,"speed_mbps":%s,"size_bytes":%s,"time_total":%s,"test_url":"%s","http_code":"%s"}\n' \
     "$TIMESTAMP" "$NAME" "$STATUS" \
     "${SPEED_BPS:-0}" "${SPEED_MBPS:-0}" "${SIZE_DL:-0}" "${TIME_TOTAL:-0}" \
-    "$TEST_URL" "$HTTP_CODE" >> "$HISTORYFILE"
+    "$TEST_URL_JSON" "$HTTP_CODE" >> "$HISTORYFILE"
 
 if [ "$STATUS" = "ok" ] || [ "$STATUS" = "timeout" ]; then
     echo "OK ${SPEED_MBPS} Mbps"

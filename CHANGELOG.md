@@ -1,5 +1,29 @@
 # Changelog
 
+## [Unreleased]
+
+### Security
+
+- **Root command injection via `.conf` files** — `healthcheck.sh` and `speedtest.sh` sourced `/var/run/proxygateway/<name>.conf`, which held user-controlled values (proxy password, health check / speed test URLs) in double quotes. A value containing `"$(...)"` ran as root. Values are now single-quoted and read with a parser; the files are never sourced.
+- **Credentials in process listings** — tun2socks received the proxy URL (with password) via `-proxy`, and curl via `--proxy`. tun2socks now reads it from a `0600` YAML file (`-config`), curl from `-K -` on stdin.
+- **Credentials not URL-encoded** — passwords containing `@ : / ? # %` broke URL parsing (or could inject URL parameters). They are now percent-encoded.
+- **Name validation bypass with trailing newline** — PHP `preg_match('/^...$/')` and `echo | grep` accept `"name\n..."`. PHP regexes and model masks now use the `D` modifier; shell scripts validate with `case`.
+- **tun2socks download integrity** — SHA256 is pinned for freebsd-amd64/arm64 and verification is mandatory; download uses a private temp dir.
+- **desired.json** (all passwords in plaintext) is written with umask 077 and atomically replaced.
+- `socks5tls` / `https` now log a warning that tun2socks connects in plaintext; `ssh` fails with a clear error (tun2socks does not support it).
+
+### Fixed
+
+- **Failover never ran while processes were alive** — `watchdog.sh` only invoked `watchdog.py` when a PID was dead, so health-based failover and force-down never triggered in the common case (proxy down, tun2socks alive).
+- **Gateway stayed force-down forever** — nothing cleared `force_down` after recovery. The watchdog now tracks it and brings the gateway back up once healthy, and no longer rewrites config.xml every minute while down.
+- **Every Apply restarted every tunnel** — `connection_changed` compared `backupEnabled="0"` against a missing key. Change detection now uses a hash of all restart-relevant settings, which also picks up password/MTU/tunnel address changes that were previously ignored.
+- **Backup settings lost after failover/restart** — watchdog re-created the `.conf` without the extra section; it now rewrites it through the same code as reconfigure.
+- **Watchdog/reconfigure race** — both could run setup/teardown for the same connection concurrently. They now share a `lockf(1)` lock (the old `reconfigure.lock` check referenced a file nothing created).
+- `reconfigure.sh` used bash-only `PIPESTATUS`, which fails under FreeBSD `/bin/sh`.
+- `watchdog.sh` called `/usr/local/bin/configctl` (actual path: `/usr/local/sbin`).
+- Speed test for Shadowsocks connections used a socks5 URL against the ss server; it now goes through the TUN interface.
+- Anti-loop firewall rules for IPv6 proxy servers used `inet` and a bracketed address, breaking the pf ruleset.
+
 ## [0.4.0] - 2026-03-08
 
 ### Added
