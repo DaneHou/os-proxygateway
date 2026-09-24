@@ -9,6 +9,8 @@ RUNDIR="/var/run/proxygateway"
 LOGDIR="/var/log/proxygateway"
 WATCHDOG_LOG="${LOGDIR}/watchdog.log"
 
+. "${SCRIPT_DIR}/lib/common.sh"
+
 mkdir -p "$LOGDIR"
 
 # Check if the plugin is globally enabled and watchdog is on.
@@ -18,38 +20,21 @@ if [ ! -f "${RUNDIR}/watchdog.enabled" ]; then
     exit 0
 fi
 
-# Quick shell-level PID liveness check — skip Python if everything is healthy
-NEED_RESTART=0
-for pidfile in "${RUNDIR}"/*.pid; do
-    [ -f "$pidfile" ] || continue
-    PID=$(cat "$pidfile")
-    if ! kill -0 "$PID" 2>/dev/null; then
-        NEED_RESTART=1
-        break
-    fi
-done
+# Route-to integrity check: if approuter rules exist but none have
+# route-to for pgw_* gateways, a filter reload during gateway bounce
+# dropped the routing directives. Trigger reload to restore them.
+APPROUTER_RULES=$(/sbin/pfctl -sr 2>/dev/null | grep -c "approuter_")
+APPROUTER_ROUTETO=$(/sbin/pfctl -sr 2>/dev/null | grep "approuter_" | grep -c "route-to")
 
-# Also check: enabled connections missing a PID file
-if [ "$NEED_RESTART" = "0" ]; then
-    EXPECTED=$(grep -c '"enabled": "1"' "${RUNDIR}/desired.json" 2>/dev/null || echo 0)
-    ACTUAL=$(ls "${RUNDIR}"/*.pid 2>/dev/null | wc -l | tr -d ' ')
-    [ "$ACTUAL" -lt "$EXPECTED" ] && NEED_RESTART=1
+if [ "${APPROUTER_RULES:-0}" -gt 0 ] && [ "${APPROUTER_ROUTETO:-0}" -eq 0 ]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') route-to missing from approuter rules, reloading filter" >> "$WATCHDOG_LOG"
+    /usr/local/sbin/configctl filter reload >> "$WATCHDOG_LOG" 2>&1
 fi
 
-if [ "$NEED_RESTART" = "0" ]; then
-    # Route-to integrity check: if approuter rules exist but none have
-    # route-to for pgw_* gateways, a filter reload during gateway bounce
-    # dropped the routing directives. Trigger reload to restore them.
-    APPROUTER_RULES=$(/sbin/pfctl -sr 2>/dev/null | grep -c "approuter_" || echo 0)
-    APPROUTER_ROUTETO=$(/sbin/pfctl -sr 2>/dev/null | grep "approuter_" | grep -c "route-to" || echo 0)
-
-    if [ "$APPROUTER_RULES" -gt 0 ] && [ "$APPROUTER_ROUTETO" -eq 0 ]; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S') route-to missing from approuter rules, reloading filter" >> "$WATCHDOG_LOG"
-        /usr/local/bin/configctl filter reload >> "$WATCHDOG_LOG" 2>&1
-    fi
-
-    exit 0
-fi
-
-# A process is dead or missing — invoke Python for restart logic
-/usr/local/bin/python3 "${SCRIPT_DIR}/watchdog.py" >> "$WATCHDOG_LOG" 2>&1
+# Always run watchdog.py: besides restarting dead processes it runs the
+# periodic health checks that drive failover and force-down, which are
+# needed precisely when every tun2socks process is still alive.
+# lockf -t 0: skip this tick if the previous run or a reconfigure still
+# holds the lock, instead of piling up overlapping runs.
+/usr/bin/lockf -k -s -t 0 "$PGW_LOCKFILE" \
+    /usr/local/bin/python3 "${SCRIPT_DIR}/watchdog.py" >> "$WATCHDOG_LOG" 2>&1

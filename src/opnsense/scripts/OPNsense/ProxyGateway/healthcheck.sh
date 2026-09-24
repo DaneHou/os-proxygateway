@@ -17,6 +17,7 @@ LOGDIR="/var/log/proxygateway"
 
 # Source structured logging library
 . "${SCRIPT_DIR}/lib/logging.sh"
+. "${SCRIPT_DIR}/lib/common.sh"
 
 # Default probe target: Cloudflare anycast IP (returns 301, no DNS needed)
 DEFAULT_TARGET="http://1.1.1.1/"
@@ -31,8 +32,8 @@ if [ -z "$NAME" ]; then
 fi
 
 # Validate name (alphanumeric + underscore, max 16 chars — must match MVC model)
-echo "$NAME" | grep -qE '^[a-zA-Z0-9_]{1,16}$' || {
-    echo "ERROR: Invalid connection name: $NAME"
+pgw_valid_name "$NAME" || {
+    echo "ERROR: Invalid connection name"
     exit 1
 }
 
@@ -51,13 +52,26 @@ if [ ! -f "$CONFFILE" ]; then
     exit 1
 fi
 
-. "$CONFFILE"
+# Read only the keys we need — the .conf holds user-controlled values and
+# must never be sourced.
+IFACE=$(conf_get IFACE "$CONFFILE")
+PROXY_TYPE=$(conf_get PROXY_TYPE "$CONFFILE")
+PROXY_URL=$(conf_get PROXY_URL "$CONFFILE")
+HEALTH_TARGET=$(conf_get HEALTH_TARGET "$CONFFILE")
+IFACE="${IFACE:-pgw_${NAME}}"
 
 # Use custom health check target from .conf if no argument was passed.
-# HEALTH_TARGET is written by reconfigure.py's save_healthcheck_config().
+# HEALTH_TARGET is written by pgwconf.write_extra_config().
 if [ -z "$TARGET" ]; then
     TARGET="${HEALTH_TARGET:-$DEFAULT_TARGET}"
 fi
+case "$TARGET" in
+    http://*|https://*) ;;
+    *) log_error "Health check target must be an http(s) URL"; exit 1 ;;
+esac
+case "$TIMEOUT" in
+    ''|*[!0-9]*) TIMEOUT=10 ;;
+esac
 
 # Check if tun2socks process is alive
 if [ -f "${RUNDIR}/${NAME}.pid" ]; then
@@ -111,18 +125,20 @@ START_MS=$(date +%s%N 2>/dev/null || echo "0")
 
 CURL_ERR_FILE="${RUNDIR}/${NAME}.curl_err"
 if [ -n "$CURL_PROXY" ]; then
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-        --proxy "$CURL_PROXY" \
+    # Proxy URL is fed through a curl config on stdin so the credentials
+    # don't appear in ps(1) output.
+    HTTP_CODE=$(printf 'proxy = "%s"\n' "$(pgw_curl_cfg_escape "$CURL_PROXY")" | \
+        curl -K - -s -o /dev/null -w "%{http_code}" \
         --connect-timeout "$TIMEOUT" \
         --max-time "$TIMEOUT" \
-        "$TARGET" 2>"$CURL_ERR_FILE")
+        -- "$TARGET" 2>"$CURL_ERR_FILE")
 else
     # SS/SSH: test through the TUN interface directly
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
         --interface "$USE_INTERFACE" \
         --connect-timeout "$TIMEOUT" \
         --max-time "$TIMEOUT" \
-        "$TARGET" 2>"$CURL_ERR_FILE")
+        -- "$TARGET" 2>"$CURL_ERR_FILE")
 fi
 CURL_EXIT=$?
 

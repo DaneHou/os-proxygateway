@@ -11,6 +11,7 @@ RECONFIGURE_LOG="${LOGDIR}/reconfigure.log"
 
 # Source structured logging library
 . "${SCRIPT_DIR}/lib/logging.sh"
+. "${SCRIPT_DIR}/lib/common.sh"
 
 log_init "reconfig" "-" "info"
 
@@ -32,8 +33,18 @@ fi
 # Log file persists for the diagnostics page to display.
 # NOTE: reconfigure.py logs only to stdout; we tee it to the log file here.
 # Do NOT add a Python FileHandler — that would double every line.
+#
+# The shared lock serialises us with watchdog.py so the two never run
+# setup.sh/teardown.sh for the same connection at the same time.
+# POSIX sh has no PIPESTATUS, so the Python exit code goes through a file.
+RC_FILE="${RUNDIR}/reconfigure.rc"
 echo "=== Reconfigure started at $(date) ===" > "$RECONFIGURE_LOG"
-/usr/local/bin/python3 "${SCRIPT_DIR}/reconfigure.py" "$DESIRED_CONFIG" 2>&1 | tee -a "$RECONFIGURE_LOG"
-EXIT_CODE=${PIPESTATUS[0]:-$?}
+{
+    /usr/bin/lockf -k -t 120 "$PGW_LOCKFILE" \
+        /usr/local/bin/python3 "${SCRIPT_DIR}/reconfigure.py" "$DESIRED_CONFIG" 2>&1
+    echo "$?" > "$RC_FILE"
+} | tee -a "$RECONFIGURE_LOG"
+EXIT_CODE=$(cat "$RC_FILE" 2>/dev/null || echo 1)
+rm -f "$RC_FILE"
 echo "=== Reconfigure finished at $(date) (exit code: $EXIT_CODE) ===" >> "$RECONFIGURE_LOG"
-exit $EXIT_CODE
+exit "$EXIT_CODE"

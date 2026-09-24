@@ -14,6 +14,7 @@ LOGDIR="/var/log/proxygateway"
 
 # Source structured logging library
 . "${SCRIPT_DIR}/lib/logging.sh"
+. "${SCRIPT_DIR}/lib/common.sh"
 
 NAME="$1"
 DEFER_ROUTES="no"
@@ -24,8 +25,8 @@ if [ -z "$NAME" ]; then
 fi
 
 # Validate name (alphanumeric + underscore, max 16 chars — must match MVC model)
-echo "$NAME" | grep -qE '^[a-zA-Z0-9_]{1,16}$' || {
-    echo "ERROR: Invalid connection name: $NAME"
+pgw_valid_name "$NAME" || {
+    echo "ERROR: Invalid connection name"
     exit 1
 }
 
@@ -93,6 +94,7 @@ fi
 # Step 4: Clean up config and device tracking files
 rm -f "$CONFFILE"
 rm -f "${RUNDIR}/${NAME}.tundev"
+rm -f "${RUNDIR}/${NAME}.t2s.yaml"
 rm -f "${RUNDIR}/${NAME}.status"
 log_debug "Removed config and tracking files"
 
