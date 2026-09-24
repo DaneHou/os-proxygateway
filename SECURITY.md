@@ -4,9 +4,8 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.4.x   | Yes                |
-| 1.0.x   | Yes                |
-| < 1.0   | No                 |
+| 1.2.x   | Yes                |
+| < 1.2   | No                 |
 
 Only the latest release receives security fixes. Upgrade to the latest version
 by running `git pull && make install` on your OPNsense system.
@@ -16,7 +15,7 @@ by running `git pull && make install` on your OPNsense system.
 **Do not open public GitHub issues for security vulnerabilities.**
 
 Report security issues through
-[GitHub Security Advisories](https://github.com/DaneBA/os-proxygateway/security/advisories/new).
+[GitHub Security Advisories](https://github.com/DaneHou/os-proxygateway/security/advisories/new).
 
 When reporting, please include:
 
@@ -48,11 +47,16 @@ executed by configd, which runs as root.
 - Proxy passwords are stored in **plaintext** in `/conf/config.xml`. This is
   consistent with how OPNsense stores credentials for OpenVPN, IPsec, and other
   services.
-- Passwords are **never exposed in process listings** (`ps`). The reconfigure
-  script passes credentials via environment variables, not command-line
-  arguments.
-- Runtime config files (`/var/run/proxygateway/*.conf`) that contain proxy URLs
-  with embedded credentials are restricted to `0600 root:wheel`.
+- Passwords are **never exposed in process listings** (`ps`). Scripts pass
+  credentials via environment variables; tun2socks reads its proxy URL from a
+  `0600` YAML file (`-config`), and curl reads it from a config on stdin
+  (`-K -`).
+- Credentials are percent-encoded before being placed in proxy URLs.
+- Runtime config files (`/var/run/proxygateway/*.conf`, `*.t2s.yaml`,
+  `desired.json`) that contain credentials are created `0600` (umask 077).
+- `.conf` values are stored shell single-quoted and read back with a parser
+  (`conf_get` / `pgwconf.read_conf`); they are never sourced, so a password or
+  URL containing `$(...)` cannot execute commands.
 - The runtime directory (`/var/run/proxygateway/`) is created with mode `0750`.
 - Log files redact passwords.
 
@@ -67,7 +71,9 @@ executed by configd, which runs as root.
 ### Input Validation
 
 - Connection names are restricted to `[a-zA-Z0-9_]{1,16}` via MVC model
-  validation.
+  validation, and re-validated in every backend script. Regexes use the `D`
+  modifier (PHP) or `case` patterns (sh) so a trailing newline cannot slip
+  through.
 - Proxy server addresses are validated against hostname and IP patterns.
 - All user input passes through OPNsense MVC field validators before reaching
   backend scripts.
@@ -81,6 +87,15 @@ executed by configd, which runs as root.
 - **Admins with config.xml access** can read proxy credentials. Restrict admin
   access to trusted personnel.
 - **tun2socks is a third-party binary** downloaded from
-  [xjasonlyu/tun2socks](https://github.com/xjasonlyu/tun2socks). The binary
-  is fetched over HTTPS from GitHub Releases. Verify the binary integrity if
-  your threat model requires it.
+  [xjasonlyu/tun2socks](https://github.com/xjasonlyu/tun2socks).
+  `make install-tun2socks` pins the SHA256 of each release zip and refuses to
+  install on mismatch.
+- **No TLS to the proxy.** tun2socks v2.6 has no TLS transport for SOCKS5 or
+  HTTP proxies, so those connections are plaintext between OPNsense and the
+  proxy (credentials and destination hostnames are visible on that path).
+  The misleading "SOCKS5 + TLS" / "HTTPS CONNECT" types and the non-working
+  "SSH" type were removed in 0.4.1. Use Shadowsocks, or carry the tunnel
+  over a VPN, when that path is untrusted.
+- **The connection edit dialog returns stored passwords** to the browser, like
+  most OPNsense plugins. Anyone with access to the Proxy Gateway pages can read
+  them.

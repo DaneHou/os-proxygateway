@@ -13,15 +13,16 @@ RUNDIR="/var/run/proxygateway"
 LOGDIR="/var/log/proxygateway"
 TUN2SOCKS="/usr/local/bin/tun2socks"
 
-# Source structured logging library
+# Source structured logging library and shared helpers
 . "${SCRIPT_DIR}/lib/logging.sh"
+. "${SCRIPT_DIR}/lib/common.sh"
 
 usage() {
     echo "Usage: $0 <name> <proxy_type> <proxy_addr> <proxy_port> [options]"
     echo ""
     echo "Options:"
     echo "  --auth-user <user>       Proxy auth username"
-    echo "  --auth-pass <pass>       Proxy auth password"
+    echo "  --auth-pass-env          Read proxy auth password from \$PROXY_AUTH_PASS"
     echo "  --tun-addr <ip>          Local tunnel address (default: auto-assign)"
     echo "  --tun-mtu <mtu>          Tunnel MTU (default: 1500)"
     echo "  --loglevel <level>       Log level: debug|info|warn|error (default: warn)"
@@ -50,13 +51,11 @@ SS_METHOD=""
 SS_PASSWORD=""
 SS_OBFS=""
 SS_OBFS_HOST=""
-SSH_KEY=""
 
 # Parse optional arguments
 while [ $# -gt 0 ]; do
     case "$1" in
         --auth-user)  AUTH_USER="$2"; shift 2 ;;
-        --auth-pass)  AUTH_PASS="$2"; shift 2 ;;
         --auth-pass-env)
             # Read password from environment variable for security
             AUTH_PASS="${PROXY_AUTH_PASS}"
@@ -70,7 +69,6 @@ while [ $# -gt 0 ]; do
             shift 1 ;;
         --ss-obfs)     SS_OBFS="$2"; shift 2 ;;
         --ss-obfs-host) SS_OBFS_HOST="$2"; shift 2 ;;
-        --ssh-key)     SSH_KEY="$2"; shift 2 ;;
         --defer-routes) DEFER_ROUTES="yes"; shift 1 ;;
         --loglevel)
             # tun2socks uses Go's zap logger: debug|info|warn|error|panic|fatal
@@ -84,8 +82,8 @@ while [ $# -gt 0 ]; do
 done
 
 # Validate name (alphanumeric + underscore, max 16 chars — must match MVC model)
-echo "$NAME" | grep -qE '^[a-zA-Z0-9_]{1,16}$' || {
-    echo "ERROR: Invalid connection name: $NAME"
+pgw_valid_name "$NAME" || {
+    echo "ERROR: Invalid connection name"
     exit 1
 }
 
@@ -94,9 +92,14 @@ PIDFILE="${RUNDIR}/${NAME}.pid"
 LOGFILE="${LOGDIR}/${NAME}.log"
 CONFFILE="${RUNDIR}/${NAME}.conf"
 TUNDEVFILE="${RUNDIR}/${NAME}.tundev"
+T2S_CONFIG="${RUNDIR}/${NAME}.t2s.yaml"
+
+# Files created below may contain credentials — keep them private
+umask 077
 
 # Ensure directories exist with restrictive permissions
 mkdir -p -m 0750 "$RUNDIR"
+chmod 0750 "$RUNDIR"
 mkdir -p "$LOGDIR"
 
 # Initialize structured logging
@@ -121,7 +124,7 @@ fi
 # Auto-assign tunnel address if not specified
 if [ -z "$TUN_ADDR" ]; then
     # Use a hash of the name to generate a deterministic address in 172.31.0.0/16
-    HASH=$(echo -n "$NAME" | md5 | cut -c1-4)
+    HASH=$(printf '%s' "$NAME" | md5 | cut -c1-4)
     OCTET3=$(printf "%d" "0x$(echo "$HASH" | cut -c1-2)")
     OCTET4=$(printf "%d" "0x$(echo "$HASH" | cut -c3-4)")
     OCTET3=$(( (OCTET3 % 254) + 1 ))
@@ -135,27 +138,30 @@ TUN_PEER_LAST=$(echo "$TUN_LOCAL" | awk -F. '{print $4}')
 TUN_PEER_LAST=$((TUN_PEER_LAST + 1))
 TUN_PEER="$(echo "$TUN_LOCAL" | awk -F. '{printf "%s.%s.%s.", $1, $2, $3}')${TUN_PEER_LAST}"
 
+# Credentials go into the URL userinfo, so percent-encode them; otherwise a
+# password containing @ : / ? # would change how the URL is parsed.
+USERINFO=""
+if [ -n "$AUTH_USER" ] && [ -n "$AUTH_PASS" ]; then
+    USERINFO="$(pgw_urlencode "$AUTH_USER"):$(pgw_urlencode "$AUTH_PASS")@"
+fi
+
 # Build proxy URL
+# tun2socks v2.6 has no TLS transport to the proxy and no SSH support. The
+# socks5tls/https/ssh types were removed from the model (migration M0_4_1);
+# the legacy values are still mapped here in case an old desired.json is
+# used before the migration has run.
 case "$PROXY_TYPE" in
     socks5|socks5tls)
-        PROXY_URL="socks5://"
-        if [ -n "$AUTH_USER" ] && [ -n "$AUTH_PASS" ]; then
-            PROXY_URL="${PROXY_URL}${AUTH_USER}:${AUTH_PASS}@"
-        fi
-        PROXY_URL="${PROXY_URL}${PROXY_ADDR}:${PROXY_PORT}"
+        PROXY_URL="socks5://${USERINFO}${PROXY_ADDR}:${PROXY_PORT}"
         ;;
     http|https)
-        PROXY_URL="http://"
-        if [ -n "$AUTH_USER" ] && [ -n "$AUTH_PASS" ]; then
-            PROXY_URL="${PROXY_URL}${AUTH_USER}:${AUTH_PASS}@"
-        fi
-        PROXY_URL="${PROXY_URL}${PROXY_ADDR}:${PROXY_PORT}"
+        PROXY_URL="http://${USERINFO}${PROXY_ADDR}:${PROXY_PORT}"
         ;;
     ss)
         # Shadowsocks: ss://method:password@host:port/?obfs=xxx;obfs-host=xxx
         PROXY_URL="ss://"
         if [ -n "$SS_METHOD" ] && [ -n "$SS_PASSWORD" ]; then
-            PROXY_URL="${PROXY_URL}${SS_METHOD}:${SS_PASSWORD}@"
+            PROXY_URL="${PROXY_URL}$(pgw_urlencode "$SS_METHOD"):$(pgw_urlencode "$SS_PASSWORD")@"
         fi
         PROXY_URL="${PROXY_URL}${PROXY_ADDR}:${PROXY_PORT}"
         if [ -n "$SS_OBFS" ]; then
@@ -166,15 +172,8 @@ case "$PROXY_TYPE" in
         fi
         ;;
     ssh)
-        # SSH: ssh://user:pass@host:port or ssh://host:port?privateKeyFile=xxx
-        PROXY_URL="ssh://"
-        if [ -n "$AUTH_USER" ] && [ -n "$AUTH_PASS" ]; then
-            PROXY_URL="${PROXY_URL}${AUTH_USER}:${AUTH_PASS}@"
-        fi
-        PROXY_URL="${PROXY_URL}${PROXY_ADDR}:${PROXY_PORT}"
-        if [ -n "$SSH_KEY" ]; then
-            PROXY_URL="${PROXY_URL}?privateKeyFile=${SSH_KEY}"
-        fi
+        log_error "SSH proxies are not supported by tun2socks"
+        exit 1
         ;;
     *)
         log_error "Unknown proxy type: $PROXY_TYPE"
@@ -196,15 +195,20 @@ fi
 # Step 2: Start tun2socks with the final interface name directly.
 log_info "Starting tun2socks (device=$IFACE, loglevel: ${LOGLEVEL})..."
 
-# Build tun2socks command with proper quoting (no stored-in-variable expansion)
+# The proxy URL (with credentials) is passed via a 0600 YAML config file
+# instead of -proxy, so it never shows up in ps(1) output. tun2socks applies
+# the config file on top of the command-line flags.
+printf "proxy: '%s'\n" "$(printf '%s' "$PROXY_URL" | sed "s/'/''/g")" > "$T2S_CONFIG"
+chmod 600 "$T2S_CONFIG"
+
 if [ "$PROXY_TYPE" = "socks5" ] || [ "$PROXY_TYPE" = "socks5tls" ] || [ "$PROXY_TYPE" = "ss" ]; then
     # SOCKS5: add UDP timeout for UDP relay support
     log_debug "Using UDP timeout (300s) for SOCKS5 proxy"
-    "$TUN2SOCKS" -device "$IFACE" -proxy "$PROXY_URL" -loglevel "$LOGLEVEL" \
+    "$TUN2SOCKS" -config "$T2S_CONFIG" -device "$IFACE" -loglevel "$LOGLEVEL" \
         -tcp-sndbuf 256KB -tcp-rcvbuf 256KB -tcp-auto-tuning \
         -udp-timeout 300s >> "$LOGFILE" 2>&1 &
 else
-    "$TUN2SOCKS" -device "$IFACE" -proxy "$PROXY_URL" -loglevel "$LOGLEVEL" \
+    "$TUN2SOCKS" -config "$T2S_CONFIG" -device "$IFACE" -loglevel "$LOGLEVEL" \
         -tcp-sndbuf 256KB -tcp-rcvbuf 256KB -tcp-auto-tuning >> "$LOGFILE" 2>&1 &
 fi
 
@@ -258,22 +262,27 @@ chmod 644 "$MONITOR_FILE"
 log_debug "Wrote monitor IP file: ${MONITOR_FILE} -> ${PROXY_ADDR}"
 
 # Step 5: Save connection config for status/teardown/healthcheck
-# Note: PROXY_URL contains credentials, so secure this file
-cat > "$CONFFILE" <<EOF
-NAME="${NAME}"
-IFACE="${IFACE}"
-TUN_DEV="${IFACE}"
-PROXY_TYPE="${PROXY_TYPE}"
-PROXY_ADDR="${PROXY_ADDR}"
-PROXY_PORT="${PROXY_PORT}"
-PROXY_URL="${PROXY_URL}"
-TUN_LOCAL="${TUN_LOCAL}"
-TUN_PEER="${TUN_PEER}"
-TUN_MTU="${TUN_MTU}"
-PROXY_IFACE="${PROXY_IFACE}"
-PID="${T2S_PID}"
-STARTED_AT="$(date +%s)"
-EOF
+# PROXY_URL contains credentials and values are user-controlled, so every
+# value is single-quoted (read back with conf_get, never sourced) and the
+# file is created 0600 via umask above.
+{
+    for _kv in \
+        "NAME=${NAME}" \
+        "IFACE=${IFACE}" \
+        "TUN_DEV=${IFACE}" \
+        "PROXY_TYPE=${PROXY_TYPE}" \
+        "PROXY_ADDR=${PROXY_ADDR}" \
+        "PROXY_PORT=${PROXY_PORT}" \
+        "PROXY_URL=${PROXY_URL}" \
+        "TUN_LOCAL=${TUN_LOCAL}" \
+        "TUN_PEER=${TUN_PEER}" \
+        "TUN_MTU=${TUN_MTU}" \
+        "PROXY_IFACE=${PROXY_IFACE}" \
+        "PID=${T2S_PID}" \
+        "STARTED_AT=$(date +%s)"; do
+        printf '%s=%s\n' "${_kv%%=*}" "$(pgw_shquote "${_kv#*=}")"
+    done
+} > "$CONFFILE"
 chmod 600 "$CONFFILE"
 chown root:wheel "$CONFFILE"
 log_debug "Saved connection config to ${CONFFILE} (secure permissions)"

@@ -11,13 +11,14 @@ LOGDIR="/var/log/proxygateway"
 
 # Source structured logging library
 . "${SCRIPT_DIR}/lib/logging.sh"
+. "${SCRIPT_DIR}/lib/common.sh"
 
 NAME="$1"
 
 if [ -n "$NAME" ]; then
     # Validate name
-    echo "$NAME" | grep -qE '^[a-zA-Z0-9_]{1,16}$' || {
-        echo "ERROR: Invalid connection name: $NAME"
+    pgw_valid_name "$NAME" || {
+        echo "ERROR: Invalid connection name"
         exit 1
     }
 

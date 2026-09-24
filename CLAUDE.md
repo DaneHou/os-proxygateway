@@ -2,7 +2,7 @@
 
 ## What This Project Is
 
-os-proxygateway is an OPNsense plugin that converts SOCKS5 and HTTP/HTTPS proxy servers into standard OPNsense gateway interfaces using tun2socks. Users route traffic through proxies via firewall rules — no client-side configuration needed.
+os-proxygateway is an OPNsense plugin that converts SOCKS5, HTTP CONNECT and Shadowsocks proxy servers into standard OPNsense gateway interfaces using tun2socks. Users route traffic through proxies via firewall rules — no client-side configuration needed.
 
 ## Target Environment
 
@@ -42,15 +42,17 @@ src/
 │   │   ├── setup.sh                     # Start a connection (tun2socks + TUN interface)
 │   │   ├── teardown.sh                  # Stop a connection
 │   │   ├── reconfigure.py               # Orchestrates setup/teardown based on desired.json
+│   │   ├── pgwconf.py                   # Shared .conf read/write, config hash, failover state reset
 │   │   ├── status.py                    # Get connection statuses (traffic, uptime, failover)
 │   │   ├── healthcheck.sh              # HTTP-based connectivity probe
 │   │   ├── watchdog.py                  # Periodic monitoring: PID check, health check, failover
 │   │   ├── gateway_force_down.php       # Set gateway force_down via OPNsense Config API
 │   │   ├── speedtest.sh                # Run speed test through proxy
 │   │   ├── speedtest_cron.sh           # Cron wrapper for speed test
-│   │   ├── generate_desired.php         # Legacy desired.json generator
+│   │   ├── generate_desired.php         # desired.json generator used by rc.d at boot
 │   │   ├── clear_logs.sh               # Log cleanup
-│   │   └── lib/logging.sh              # Shared logging functions
+│   │   ├── lib/logging.sh              # Shared logging functions
+│   │   └── lib/common.sh               # Name validation, conf_get, shell/URL quoting, lock path
 │   └── service/conf/actions.d/
 │       └── actions_proxygateway.conf    # configd action definitions
 ```
@@ -70,16 +72,21 @@ src/
 - `monitor_disable=1` because SOCKS5 doesn't support ICMP (dpinger fails)
 - Gateway naming: `PROXYGW_` prefix + uppercase connection name
 
-### Failover System (v0.4.0)
+### Failover System (plugin 1.1+, model 0.4.x)
 - `watchdog.py` runs every 60s via cron, checks PID + health for each connection
 - Failover state stored in `/var/run/proxygateway/{name}.failover` (JSON)
 - On consecutive health failures ≥ threshold: switch to backup proxy or force-down gateway
+- force_down is tracked in the .failover state and cleared automatically once healthy again
 - `gateway_force_down.php` modifies `config.xml` gateway `force_down` field
 - 5-minute cooldown after switch to prevent rapid flapping
 - Primary probe runs independently (curl directly to primary proxy, not through TUN)
 
+### Versions
+- Plugin version: `PLUGIN_VERSION` in `Makefile` (CHANGELOG headings use it)
+- Model schema version: `<version>` in `ProxyGateway.xml`; bump it and add `Migrations/M<x>_<y>_<z>.php` when fields/options change
+
 ### Runtime Files
-- `/var/run/proxygateway/` — PID files, .conf files, .failover state, desired.json
+- `/var/run/proxygateway/` — PID files, .conf files, .t2s.yaml (tun2socks config, 0600), .failover state, desired.json
 - `/var/log/proxygateway/` — Per-connection logs, health history, speed test results
 
 ## Code Style
@@ -112,6 +119,9 @@ src/
 - **Web GUI restart**: Use `configctl webgui restart`
 - **Gateway fields**: OPNsense gateway_item requires ~20 MVC fields
 - **proxygateway.inc sync_gateways**: Must NOT overwrite `force_down` field (managed by watchdog)
+- **Runtime .conf files**: Hold user-controlled values (passwords, URLs). Write them single-quoted (`pgw_shquote` / `pgwconf.conf_line`) and read with `conf_get` / `pgwconf.read_conf` — never `. "$CONFFILE"`
+- **Credentials on command lines**: Never pass them as argv (visible in `ps`). tun2socks gets the proxy URL via `-config <name>.t2s.yaml`, curl via `-K -` on stdin; percent-encode userinfo
+- **Locking**: reconfigure.sh and watchdog.sh share `lockf` on `/var/run/proxygateway/pgw.lock`
 
 ## Testing
 

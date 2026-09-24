@@ -1,7 +1,7 @@
 <?php
 
 /*
- * Copyright (c) 2024-2026 DaneBA
+ * Copyright (c) 2024-2026 os-proxygateway contributors
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -106,7 +106,7 @@ class DiagnosticsController extends ApiControllerBase
         if ($this->request->isPost()) {
             $name = $this->request->getPost('name');
 
-            if (empty($name) || !preg_match('/^[a-zA-Z0-9_]{1,16}$/', $name)) {
+            if (empty($name) || !preg_match('/^[a-zA-Z0-9_]{1,16}$/D', $name)) {
                 return ['status' => 'failed', 'message' => 'Connection name is required'];
             }
 
@@ -130,7 +130,7 @@ class DiagnosticsController extends ApiControllerBase
     public function getLogsAction()
     {
         $name = $this->request->get('name', null, '');
-        if (!empty($name) && !preg_match('/^[a-zA-Z0-9_]{1,16}$/', $name)) {
+        if (!empty($name) && !preg_match('/^[a-zA-Z0-9_]{1,16}$/D', $name)) {
             return ['status' => 'failed', 'message' => 'Invalid connection name'];
         }
         $lines = (int)$this->request->get('lines', null, 50);
@@ -198,7 +198,7 @@ class DiagnosticsController extends ApiControllerBase
         if ($this->request->isPost()) {
             $name = $this->request->getPost('name', null, '');
 
-            if (!empty($name) && !preg_match('/^[a-zA-Z0-9_]{1,16}$/', $name)) {
+            if (!empty($name) && !preg_match('/^[a-zA-Z0-9_]{1,16}$/D', $name)) {
                 return ['status' => 'failed', 'message' => 'Invalid connection name'];
             }
 
@@ -298,7 +298,7 @@ class DiagnosticsController extends ApiControllerBase
 
     /**
      * Get latest speed test results for all connections.
-     * Reads .speedtest and .speedtest_domestic files from /var/run/proxygateway/.
+     * Reads .speedtest files from /var/run/proxygateway/.
      * @return array speed test results per connection
      */
     public function getSpeedTestResultsAction()
@@ -313,18 +313,11 @@ class DiagnosticsController extends ApiControllerBase
             }
 
             $name = (string)$conn->name;
-            $entry = ['name' => $name, 'international' => null, 'domestic' => null];
+            $entry = ['name' => $name, 'result' => null];
 
-            // Read international result
-            $intlFile = "{$runDir}/{$name}.speedtest";
-            if (file_exists($intlFile)) {
-                $entry['international'] = $this->parseSpeedTestFile($intlFile);
-            }
-
-            // Read domestic result
-            $domFile = "{$runDir}/{$name}.speedtest_domestic";
-            if (file_exists($domFile)) {
-                $entry['domestic'] = $this->parseSpeedTestFile($domFile);
+            $resultFile = "{$runDir}/{$name}.speedtest";
+            if (file_exists($resultFile)) {
+                $entry['result'] = $this->parseSpeedTestFile($resultFile);
             }
 
             $results[] = $entry;
@@ -340,7 +333,7 @@ class DiagnosticsController extends ApiControllerBase
     public function getSpeedTestHistoryAction()
     {
         $name = $this->request->get('name', null, '');
-        if (empty($name) || !preg_match('/^[a-zA-Z0-9_]{1,16}$/', $name)) {
+        if (empty($name) || !preg_match('/^[a-zA-Z0-9_]{1,16}$/D', $name)) {
             return ['status' => 'failed', 'message' => 'Valid connection name is required'];
         }
 
@@ -372,7 +365,7 @@ class DiagnosticsController extends ApiControllerBase
     public function getHealthHistoryAction()
     {
         $name = $this->request->get('name', null, '');
-        if (empty($name) || !preg_match('/^[a-zA-Z0-9_]{1,16}$/', $name)) {
+        if (empty($name) || !preg_match('/^[a-zA-Z0-9_]{1,16}$/D', $name)) {
             return ['status' => 'failed', 'message' => 'Valid connection name is required'];
         }
 
@@ -407,25 +400,17 @@ class DiagnosticsController extends ApiControllerBase
 
         if ($this->request->isPost()) {
             $name = $this->request->getPost('name');
-            $type = $this->request->getPost('type', null, 'international');
 
-            if (empty($name) || !preg_match('/^[a-zA-Z0-9_]{1,16}$/', $name)) {
+            if (empty($name) || !preg_match('/^[a-zA-Z0-9_]{1,16}$/D', $name)) {
                 return ['status' => 'failed', 'message' => 'Connection name is required'];
             }
 
-            if (!in_array($type, ['international', 'domestic'])) {
-                $type = 'international';
-            }
-
             $backend = new \OPNsense\Core\Backend();
-            // speedtest.sh args: <name> [test_url] [size_bytes] [timeout] [test_type]
-            // Pass empty strings for url/size/timeout to use defaults.
-            $response = trim($backend->configdRun("proxygateway speedtest {$name} \"\" \"\" \"\" {$type}"));
+            $response = trim($backend->configdRun("proxygateway speedtest {$name}"));
 
             $result = [
                 'status' => 'ok',
                 'name'   => $name,
-                'type'   => $type,
                 'result' => $response,
             ];
         }

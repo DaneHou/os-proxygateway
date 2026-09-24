@@ -23,7 +23,7 @@ $name = $argv[1];
 $action = $argv[2];
 
 // Validate name
-if (!preg_match('/^[a-zA-Z0-9_]{1,16}$/', $name)) {
+if (!preg_match('/^[a-zA-Z0-9_]{1,16}$/D', $name)) {
     echo json_encode(['status' => 'error', 'message' => 'Invalid connection name']);
     exit(1);
 }

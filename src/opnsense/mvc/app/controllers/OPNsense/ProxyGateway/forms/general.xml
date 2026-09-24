@@ -40,12 +40,6 @@
         <help>How often to run speed tests for each connection. Shorter intervals provide more data but use more bandwidth.</help>
     </field>
     <field>
-        <id>general.speedTestSize</id>
-        <label>Test File Size</label>
-        <type>dropdown</type>
-        <help>Size of the test download. Larger files give more accurate results but take longer and use more bandwidth. Estimated daily usage per connection: 1MB=96MB, 5MB=480MB, 10MB=960MB, 25MB=2.4GB (at 15min interval).</help>
-    </field>
-    <field>
         <type>header</type>
         <label>Failover</label>
     </field>

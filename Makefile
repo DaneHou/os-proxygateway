@@ -1,12 +1,15 @@
 PLUGIN_NAME=	os-proxygateway
-PLUGIN_VERSION=	1.1.0
+PLUGIN_VERSION=	1.2.0
 PLUGIN_ARCH?=	freebsd-amd64
 
 TUN2SOCKS_VERSION=	2.6.0
 TUN2SOCKS_URL=		https://github.com/xjasonlyu/tun2socks/releases/download/v$(TUN2SOCKS_VERSION)/tun2socks-$(PLUGIN_ARCH).zip
-# SHA256 hash of the tun2socks zip for integrity verification.
-# Set per-architecture; leave empty to skip verification (prints hash for you to record).
-TUN2SOCKS_SHA256?=
+# SHA256 of the release zip per architecture. The binary runs as root, so
+# installation refuses to proceed without a matching hash. Update these
+# together with TUN2SOCKS_VERSION.
+TUN2SOCKS_SHA256_freebsd-amd64=	ccef33c3a38f51c66260c508c14dfbda670990c24105017d395311ee7752038a
+TUN2SOCKS_SHA256_freebsd-arm64=	9c50c957195ef7bf4d3b351181e54f6a8922c8e55bae463342d727d1f0829cab
+TUN2SOCKS_SHA256?=	$(TUN2SOCKS_SHA256_$(PLUGIN_ARCH))
 
 PREFIX?=	/usr/local
 DESTDIR?=
@@ -112,25 +115,24 @@ install-tun2socks:
 	@echo ">>> Downloading tun2socks v$(TUN2SOCKS_VERSION) for $(PLUGIN_ARCH)..."
 	@mkdir -p $(BIN_DIR)
 	@if [ ! -x $(BIN_DIR)/tun2socks ]; then \
-		fetch -o /tmp/tun2socks.zip $(TUN2SOCKS_URL) && \
-		if [ -n "$(TUN2SOCKS_SHA256)" ]; then \
-			ACTUAL=$$(sha256 -q /tmp/tun2socks.zip) && \
-			if [ "$$ACTUAL" != "$(TUN2SOCKS_SHA256)" ]; then \
-				echo "ERROR: SHA256 checksum mismatch!"; \
-				echo "  Expected: $(TUN2SOCKS_SHA256)"; \
-				echo "  Actual:   $$ACTUAL"; \
-				rm -f /tmp/tun2socks.zip; \
-				exit 1; \
-			fi; \
-			echo ">>> SHA256 verified: $$ACTUAL"; \
-		else \
-			echo ">>> WARNING: TUN2SOCKS_SHA256 not set — skipping integrity check"; \
-			echo ">>> Downloaded file SHA256: $$(sha256 -q /tmp/tun2socks.zip)"; \
+		if [ -z "$(TUN2SOCKS_SHA256)" ]; then \
+			echo "ERROR: no TUN2SOCKS_SHA256 known for $(PLUGIN_ARCH); set it explicitly"; \
+			exit 1; \
+		fi; \
+		WORK=$$(mktemp -d /tmp/tun2socks.XXXXXX) && \
+		fetch -o $$WORK/tun2socks.zip $(TUN2SOCKS_URL) && \
+		ACTUAL=$$(sha256 -q $$WORK/tun2socks.zip) && \
+		if [ "$$ACTUAL" != "$(TUN2SOCKS_SHA256)" ]; then \
+			echo "ERROR: SHA256 checksum mismatch!"; \
+			echo "  Expected: $(TUN2SOCKS_SHA256)"; \
+			echo "  Actual:   $$ACTUAL"; \
+			rm -rf $$WORK; \
+			exit 1; \
 		fi && \
-		unzip -o /tmp/tun2socks.zip -d /tmp/ && \
-		mv /tmp/tun2socks-$(PLUGIN_ARCH) $(BIN_DIR)/tun2socks && \
-		chmod +x $(BIN_DIR)/tun2socks && \
-		rm -f /tmp/tun2socks.zip && \
+		echo ">>> SHA256 verified: $$ACTUAL" && \
+		unzip -o $$WORK/tun2socks.zip -d $$WORK/ && \
+		install -m 0755 -o root -g wheel $$WORK/tun2socks-$(PLUGIN_ARCH) $(BIN_DIR)/tun2socks && \
+		rm -rf $$WORK && \
 		echo ">>> tun2socks installed: $$($(BIN_DIR)/tun2socks --version 2>&1 | head -1)"; \
 	else \
 		echo ">>> tun2socks already installed: $$($(BIN_DIR)/tun2socks --version 2>&1 | head -1)"; \
@@ -142,6 +144,10 @@ activate:
 	# Flush menu cache (MenuSystem.php caches to /var/lib/php/tmp/)
 	@rm -f /var/lib/php/tmp/opnsense_menu_cache.xml 2>/dev/null || true
 	@rm -f /tmp/opnsense_menu_cache.xml 2>/dev/null || true
+	# Apply model migrations (e.g. M0_4_1 converts removed proxy types)
+	@if [ -x /usr/local/opnsense/mvc/script/run_migrations.php ]; then \
+		/usr/local/opnsense/mvc/script/run_migrations.php; \
+	fi
 	# Verify plugin hooks load without PHP errors
 	@echo ">>> Checking plugin for PHP errors..."
 	@php -l $(PLUGINS_DIR)/proxygateway.inc 2>&1 || true
@@ -182,5 +188,5 @@ uninstall:
 	@echo ">>> To also remove tun2socks: rm $(BIN_DIR)/tun2socks"
 
 clean:
-	@rm -f /tmp/tun2socks.zip
+	@rm -rf /tmp/tun2socks.*
 	@rm -rf work/

@@ -100,18 +100,6 @@
     </field>
     <field>
         <type>header</type>
-        <label>SSH Settings</label>
-        <style>ssh_fields</style>
-    </field>
-    <field>
-        <id>connection.sshKeyFile</id>
-        <label>Private Key File</label>
-        <type>text</type>
-        <style>ssh_fields</style>
-        <help>Path to SSH private key file on the OPNsense filesystem (e.g., /root/.ssh/id_ed25519). Leave empty to use password authentication.</help>
-    </field>
-    <field>
-        <type>header</type>
         <label>Tunnel Settings</label>
     </field>
     <field>
@@ -125,6 +113,12 @@
         <label>MTU</label>
         <type>text</type>
         <help>Maximum Transmission Unit for the tunnel (1280-9000, default 1500).</help>
+    </field>
+    <field>
+        <id>connection.outboundNat</id>
+        <label>Outbound NAT</label>
+        <type>checkbox</type>
+        <help>Auto-generate outbound NAT for private networks (10/8, 172.16/12, 192.168/16) on this tunnel interface. Required when using AppRouter or firewall policy routing to send LAN/VPN traffic through this proxy gateway.</help>
     </field>
     <field>
         <type>header</type>
@@ -141,7 +135,7 @@
         <label>Target URL</label>
         <type>text</type>
         <style>health_fields</style>
-        <help>URL to probe for health checks. Must return HTTP 200/204. Leave empty for default (http://1.1.1.1/).</help>
+        <help>URL fetched through the proxy for health checks. Any HTTP response counts as healthy; only a timeout or connection failure counts as a failure. Leave empty for default (http://1.1.1.1/).</help>
     </field>
     <field>
         <type>header</type>
@@ -159,15 +153,9 @@
     </field>
     <field>
         <id>connection.speedTestUrl</id>
-        <label>International Test URL</label>
+        <label>Test URL</label>
         <type>text</type>
-        <help>Custom URL for international speed tests. Must be a direct-download URL. Leave empty to use default (Cloudflare speed test).</help>
-    </field>
-    <field>
-        <id>connection.speedTestUrlDomestic</id>
-        <label>Domestic Test URL</label>
-        <type>text</type>
-        <help>Custom URL for domestic (China) speed tests. Must be a direct-download URL. Leave empty to use default (USTC mirror).</help>
+        <help>Direct-download URL for speed tests. Must return a binary file (not HTML). Examples: http://speedtest.tele2.net/10MB.zip, https://proof.ovh.net/files/10Mb.dat, http://mirrors.ustc.edu.cn/ubuntu-releases/ls-lR.gz — Default: Tele2 10MB download.</help>
     </field>
     <field>
         <type>header</type>
@@ -234,13 +222,6 @@
         <type>password</type>
         <style>backup_ss_fields</style>
         <help>Backup Shadowsocks encryption password.</help>
-    </field>
-    <field>
-        <id>connection.backupSshKeyFile</id>
-        <label>Backup SSH Key File</label>
-        <type>text</type>
-        <style>backup_ssh_fields</style>
-        <help>Path to SSH private key file for the backup proxy.</help>
     </field>
     <field>
         <id>connection.failoverThreshold</id>

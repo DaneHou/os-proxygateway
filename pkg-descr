@@ -1,16 +1,17 @@
 Multi-Proxy Gateway plugin for OPNsense.
 
-Turns remote SOCKS5 and HTTP proxies into standard OPNsense gateway
+Turns remote SOCKS5, HTTP CONNECT and Shadowsocks proxies into standard OPNsense gateway
 interfaces using tun2socks. Route specific devices, VLANs, or subnets
 through any proxy using standard firewall rules — no client-side
 configuration needed.
 
 Features:
 - Multiple concurrent proxy connections, each as a separate gateway
-- SOCKS5, SOCKS5+TLS, HTTP CONNECT, HTTPS CONNECT support
-- Automatic tun interface creation and gateway registration
-- Health checking with automatic failover via Gateway Groups
-- DNS leak prevention and optional kill-switch
+- SOCKS5, HTTP CONNECT and Shadowsocks support
+- Automatic tun interface creation, gateway registration and outbound NAT
+- Health checking with backup-proxy failover, gateway force-down,
+  and Gateway Group support
+- Speed tests, traffic statistics and a diagnostics page
 - Full OPNsense MVC integration with GUI, API, and configd
 
-WWW: https://github.com/DaneBA/os-proxygateway
+WWW: https://github.com/DaneHou/os-proxygateway

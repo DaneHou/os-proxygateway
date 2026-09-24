@@ -15,6 +15,8 @@ import subprocess
 import sys
 import time
 
+import pgwconf
+
 RUNDIR = "/var/run/proxygateway"
 LOGDIR = "/var/log/proxygateway"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -54,23 +56,14 @@ log = logging.getLogger("reconfig")
 def get_running_connections():
     """Get dict of currently running connections from .conf files."""
     running = {}
-    conf_dir = RUNDIR
-    if not os.path.isdir(conf_dir):
+    if not os.path.isdir(RUNDIR):
         return running
 
-    for entry in sorted(os.listdir(conf_dir)):
+    for entry in sorted(os.listdir(RUNDIR)):
         if not entry.endswith(".conf"):
             continue
-        conf_path = os.path.join(conf_dir, entry)
-        name = entry.replace(".conf", "")
-        config = {}
-        with open(conf_path) as f:
-            for line in f:
-                line = line.strip()
-                if "=" in line:
-                    key, val = line.split("=", 1)
-                    config[key] = val.strip('"')
-        running[name] = config
+        name = entry[:-len(".conf")]
+        running[name] = pgwconf.read_conf(os.path.join(RUNDIR, entry))
     return running
 
 
@@ -118,10 +111,6 @@ def run_setup(conn):
         if conn.get("ssObfsHost"):
             cmd.extend(["--ss-obfs-host", conn["ssObfsHost"]])
 
-    # SSH settings
-    if conn.get("proxyType") == "ssh" and conn.get("sshKeyFile"):
-        cmd.extend(["--ssh-key", conn["sshKeyFile"]])
-
     log.info("Starting connection: %s", conn["name"])
     print(f"  Command: {' '.join(cmd)}")  # Safe to print now - no password in args
     result = subprocess.run(cmd, capture_output=True, text=True, env=env)
@@ -141,42 +130,9 @@ def run_setup(conn):
     return result.returncode
 
 
-def save_healthcheck_config(conn):
-    """Append health check and speed test settings to the connection's .conf file.
-
-    This makes the custom targets available to healthcheck.sh and speedtest.sh
-    regardless of whether they're called from reconfigure.py or configd.
-    """
-    name = conn["name"]
-    conf_file = os.path.join(RUNDIR, f"{name}.conf")
-    if not os.path.isfile(conf_file):
-        return
-
-    with open(conf_file, "a") as f:
-        target = conn.get("healthCheckTarget", "")
-        if target:
-            f.write(f'HEALTH_TARGET="{target}"\n')
-
-        speed_url = conn.get("speedTestUrl", "")
-        if speed_url:
-            f.write(f'SPEED_TEST_URL="{speed_url}"\n')
-
-        speed_url_domestic = conn.get("speedTestUrlDomestic", "")
-        if speed_url_domestic:
-            f.write(f'SPEED_TEST_URL_DOMESTIC="{speed_url_domestic}"\n')
-
-        # Backup proxy config
-        if conn.get("backupEnabled") == "1":
-            f.write(f'BACKUP_ENABLED="1"\n')
-            f.write(f'BACKUP_PROXY_TYPE="{conn.get("backupProxyType", "socks5")}"\n')
-            f.write(f'BACKUP_PROXY_SERVER="{conn.get("backupProxyServer", "")}"\n')
-            f.write(f'BACKUP_PROXY_PORT="{conn.get("backupProxyPort", "1080")}"\n')
-            if conn.get("backupAuthEnabled") == "1":
-                f.write(f'BACKUP_AUTH_ENABLED="1"\n')
-                f.write(f'BACKUP_AUTH_USER="{conn.get("backupAuthUser", "")}"\n')
-                f.write(f'BACKUP_AUTH_PASS="{conn.get("backupAuthPass", "")}"\n')
-            f.write(f'FAILOVER_THRESHOLD="{conn.get("failoverThreshold", "3")}"\n')
-            f.write(f'FAILBACK_ENABLED="{conn.get("failbackEnabled", "1")}"\n')
+def save_extra_config(conn):
+    """Hot-update health check, speed test and backup settings in the .conf."""
+    pgwconf.write_extra_config(conn)
 
 
 def run_healthcheck(conn):
@@ -184,7 +140,7 @@ def run_healthcheck(conn):
 
     Tests actual proxy connectivity by sending traffic through the proxy.
     The target URL is read from the .conf file by healthcheck.sh (written
-    by save_healthcheck_config), so we don't pass it as an argument.
+    by save_extra_config), so we don't pass it as an argument.
     """
     name = conn["name"]
     cmd = ["/bin/sh", HEALTHCHECK_SCRIPT, name]
@@ -223,29 +179,13 @@ def run_teardown(name):
 
 
 def connection_changed(desired, running_config):
-    """Check if a connection's config has changed vs. running state."""
-    checks = [
-        ("proxyType", "PROXY_TYPE"),
-        ("proxyServer", "PROXY_ADDR"),
-        ("proxyPort", "PROXY_PORT"),
-        ("proxyInterface", "PROXY_IFACE"),
-    ]
-    for desired_key, running_key in checks:
-        if str(desired.get(desired_key, "")) != str(running_config.get(running_key, "")):
-            return True
+    """Check if a connection needs a restart to apply the desired config.
 
-    # Also check backup proxy changes
-    backup_checks = [
-        ("backupEnabled", "BACKUP_ENABLED"),
-        ("backupProxyType", "BACKUP_PROXY_TYPE"),
-        ("backupProxyServer", "BACKUP_PROXY_SERVER"),
-        ("backupProxyPort", "BACKUP_PROXY_PORT"),
-    ]
-    for desired_key, running_key in backup_checks:
-        if str(desired.get(desired_key, "")) != str(running_config.get(running_key, "")):
-            return True
-
-    return False
+    Compares a fingerprint of all restart-relevant settings (including
+    credentials and backup proxy). A .conf without a fingerprint was written
+    by an older version, so restart it once to pick up the current format.
+    """
+    return running_config.get("CONFIG_HASH") != pgwconf.config_hash(desired)
 
 
 def main():
@@ -310,18 +250,19 @@ def main():
             log.info("Config changed for '%s' — will restart", name)
             to_restart.add(name)
 
-    # Execute: stop removed/changed connections
+    # Execute: stop removed/changed connections. A restarted connection comes
+    # back on the primary proxy, so its failover state is reset too.
     for name in sorted(to_stop | to_restart):
         run_teardown(name)
+        pgwconf.clear_failover_state(name)
 
     # Execute: start new/changed connections, then verify connectivity
     started = []
     for name in sorted(to_start | to_restart):
+        pgwconf.clear_failover_state(name)
         if run_setup(desired[name]) == 0:
             started.append(name)
-            # Save health check config to .conf so healthcheck.sh (called by
-            # the Test button or cron) uses the same target/settings.
-            save_healthcheck_config(desired[name])
+            save_extra_config(desired[name])
 
     # Give tun2socks time to complete the SOCKS handshake before probing.
     # setup.sh exits once the TUN interface is up, but the proxy connection
@@ -333,8 +274,12 @@ def main():
         if desired[name].get("healthCheckEnabled", "1") == "1":
             run_healthcheck(desired[name])
 
-    # Summary
+    # Hot-update extra config (URLs, thresholds) for unchanged connections
     unchanged = to_check - to_restart
+    for name in sorted(unchanged):
+        save_extra_config(desired[name])
+
+    # Summary
     parts = []
     if unchanged:
         parts.append(f"unchanged={','.join(sorted(unchanged))}")
