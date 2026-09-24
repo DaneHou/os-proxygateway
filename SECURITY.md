@@ -92,10 +92,11 @@ executed by configd, which runs as root.
   `make install-tun2socks` pins the SHA256 of each release zip and refuses to
   install on mismatch.
 - **No TLS to the proxy.** tun2socks v2.6 has no TLS transport for SOCKS5 or
-  HTTP proxies. The "SOCKS5 + TLS" and "HTTPS CONNECT" types connect in
-  plaintext (a warning is logged), so proxy credentials and traffic metadata
-  are visible on the path to the proxy. SSH is not supported by tun2socks and
-  is refused.
+  HTTP proxies, so those connections are plaintext between OPNsense and the
+  proxy (credentials and destination hostnames are visible on that path).
+  The misleading "SOCKS5 + TLS" / "HTTPS CONNECT" types and the non-working
+  "SSH" type were removed in 0.4.1. Use Shadowsocks, or carry the tunnel
+  over a VPN, when that path is untrusted.
 - **The connection edit dialog returns stored passwords** to the browser, like
   most OPNsense plugins. Anyone with access to the Proxy Gateway pages can read
   them.

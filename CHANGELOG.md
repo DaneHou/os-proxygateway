@@ -10,7 +10,8 @@
 - **Name validation bypass with trailing newline** — PHP `preg_match('/^...$/')` and `echo | grep` accept `"name\n..."`. PHP regexes and model masks now use the `D` modifier; shell scripts validate with `case`.
 - **tun2socks download integrity** — SHA256 is pinned for freebsd-amd64/arm64 and verification is mandatory; download uses a private temp dir.
 - **desired.json** (all passwords in plaintext) is written with umask 077 and atomically replaced.
-- `socks5tls` / `https` now log a warning that tun2socks connects in plaintext; `ssh` fails with a clear error (tun2socks does not support it).
+- **Removed misleading proxy types** — "SOCKS5 + TLS" and "HTTPS CONNECT" silently connected in plaintext (tun2socks has no TLS transport to the proxy), and "SSH" never worked (tun2socks rejects the scheme). Migration M0_4_1 maps `socks5tls → socks5` and `https → http` (no behaviour change) and turns `ssh` into a disabled socks5 connection/backup. The SSH key file fields are removed.
+- `make activate` and the package post-install now run model migrations.
 
 ### Fixed
 

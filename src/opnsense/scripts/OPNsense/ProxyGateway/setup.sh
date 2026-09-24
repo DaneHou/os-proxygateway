@@ -51,7 +51,6 @@ SS_METHOD=""
 SS_PASSWORD=""
 SS_OBFS=""
 SS_OBFS_HOST=""
-SSH_KEY=""
 
 # Parse optional arguments
 while [ $# -gt 0 ]; do
@@ -70,7 +69,6 @@ while [ $# -gt 0 ]; do
             shift 1 ;;
         --ss-obfs)     SS_OBFS="$2"; shift 2 ;;
         --ss-obfs-host) SS_OBFS_HOST="$2"; shift 2 ;;
-        --ssh-key)     SSH_KEY="$2"; shift 2 ;;
         --defer-routes) DEFER_ROUTES="yes"; shift 1 ;;
         --loglevel)
             # tun2socks uses Go's zap logger: debug|info|warn|error|panic|fatal
@@ -148,17 +146,15 @@ if [ -n "$AUTH_USER" ] && [ -n "$AUTH_PASS" ]; then
 fi
 
 # Build proxy URL
-# NOTE: tun2socks v2.6 has no TLS transport for SOCKS5/HTTP proxies and no
-# SSH support, so socks5tls/https connect in PLAINTEXT and ssh is refused.
+# tun2socks v2.6 has no TLS transport to the proxy and no SSH support. The
+# socks5tls/https/ssh types were removed from the model (migration M0_4_1);
+# the legacy values are still mapped here in case an old desired.json is
+# used before the migration has run.
 case "$PROXY_TYPE" in
     socks5|socks5tls)
-        [ "$PROXY_TYPE" = "socks5tls" ] && \
-            log_warning "tun2socks does not support TLS to the proxy — connecting with plain SOCKS5"
         PROXY_URL="socks5://${USERINFO}${PROXY_ADDR}:${PROXY_PORT}"
         ;;
     http|https)
-        [ "$PROXY_TYPE" = "https" ] && \
-            log_warning "tun2socks does not support TLS to the proxy — connecting with plain HTTP CONNECT"
         PROXY_URL="http://${USERINFO}${PROXY_ADDR}:${PROXY_PORT}"
         ;;
     ss)

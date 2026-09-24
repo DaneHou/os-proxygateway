@@ -144,6 +144,10 @@ activate:
 	# Flush menu cache (MenuSystem.php caches to /var/lib/php/tmp/)
 	@rm -f /var/lib/php/tmp/opnsense_menu_cache.xml 2>/dev/null || true
 	@rm -f /tmp/opnsense_menu_cache.xml 2>/dev/null || true
+	# Apply model migrations (e.g. M0_4_1 converts removed proxy types)
+	@if [ -x /usr/local/opnsense/mvc/script/run_migrations.php ]; then \
+		/usr/local/opnsense/mvc/script/run_migrations.php; \
+	fi
 	# Verify plugin hooks load without PHP errors
 	@echo ">>> Checking plugin for PHP errors..."
 	@php -l $(PLUGINS_DIR)/proxygateway.inc 2>&1 || true

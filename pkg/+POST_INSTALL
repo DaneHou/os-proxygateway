@@ -13,6 +13,11 @@ chmod +x /usr/local/etc/rc.d/opnsense-proxygateway
 # Logging library is sourced, not executed, but keep consistent
 chmod +r /usr/local/opnsense/scripts/OPNsense/ProxyGateway/lib/*.sh
 
+# Apply model migrations (e.g. M0_4_1 converts removed proxy types)
+if [ -x /usr/local/opnsense/mvc/script/run_migrations.php ]; then
+    /usr/local/opnsense/mvc/script/run_migrations.php
+fi
+
 # Enable the service
 sysrc proxygateway_enable=YES 2>/dev/null || true
 

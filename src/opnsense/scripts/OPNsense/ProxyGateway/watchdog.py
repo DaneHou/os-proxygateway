@@ -147,10 +147,6 @@ def restart_connection(conn):
         if conn.get("ssObfsHost"):
             cmd.extend(["--ss-obfs-host", conn["ssObfsHost"]])
 
-    # SSH settings
-    if conn.get("proxyType") == "ssh" and conn.get("sshKeyFile"):
-        cmd.extend(["--ssh-key", conn["sshKeyFile"]])
-
     result = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if result.returncode != 0:
         log.error("Failed to restart %s: %s", name, result.stderr.strip())
@@ -307,12 +303,6 @@ def switch_proxy(name, conn, to_backup):
                 cmd.extend(["--ss-obfs", conn["ssObfs"]])
             if conn.get("ssObfsHost"):
                 cmd.extend(["--ss-obfs-host", conn["ssObfsHost"]])
-
-    # SSH key file
-    if proxy_type == "ssh":
-        key_file = conn.get("backupSshKeyFile", "") if to_backup else conn.get("sshKeyFile", "")
-        if key_file:
-            cmd.extend(["--ssh-key", key_file])
 
     result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=30)
     if result.returncode != 0:

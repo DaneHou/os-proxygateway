@@ -103,7 +103,7 @@ fi
 # --- Connectivity probe through the proxy server ---
 # Use PROXY_URL from .conf (includes auth credentials if configured).
 # For SOCKS5, switch to socks5h:// so curl asks the proxy to resolve DNS.
-# For SS and SSH, curl doesn't support these proxy protocols directly.
+# For Shadowsocks, curl doesn't support the proxy protocol directly.
 # Instead, route traffic through the TUN interface to test end-to-end.
 USE_INTERFACE=""
 case "$PROXY_TYPE" in
@@ -133,7 +133,7 @@ if [ -n "$CURL_PROXY" ]; then
         --max-time "$TIMEOUT" \
         -- "$TARGET" 2>"$CURL_ERR_FILE")
 else
-    # SS/SSH: test through the TUN interface directly
+    # Shadowsocks: test through the TUN interface directly
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
         --interface "$USE_INTERFACE" \
         --connect-timeout "$TIMEOUT" \
