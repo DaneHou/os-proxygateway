@@ -21,6 +21,8 @@ DEFAULT_URL="http://speedtest.tele2.net/10MB.zip"
 
 NAME="$1"
 TIMEOUT="${2:-60}"
+# Cap the download so a large test file never saturates a slow link.
+MAX_BYTES="${PGW_SPEEDTEST_MAX_BYTES:-10485760}"
 TEST_URL=""
 
 if [ -z "$NAME" ]; then
@@ -111,6 +113,7 @@ CURL_OUTPUT=$(printf '%s\n' "$CURL_CFG" | curl -K - -s -o /dev/null \
     -w "%{speed_download}\n%{size_download}\n%{time_total}\n%{http_code}" \
     --connect-timeout 15 \
     --max-time "$TIMEOUT" \
+    --range "0-$((MAX_BYTES - 1))" \
     -- "$TEST_URL" 2>/dev/null)
 CURL_EXIT=$?
 
@@ -133,7 +136,9 @@ HTTP_CODE="${HTTP_CODE:-000}"
 SPEED_MBPS=$(echo "$SPEED_BPS" | awk '{printf "%.2f", $1 * 8 / 1000000}')
 
 # Determine status
-if [ "$CURL_EXIT" -eq 0 ] && [ "$HTTP_CODE" != "000" ]; then
+# Only a real download counts: 200 (server ignored the range) or 206.
+# Error pages (403/404/5xx) used to be reported as ok at 0 Mbps.
+if [ "$CURL_EXIT" -eq 0 ] && { [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "206" ]; }; then
     STATUS="ok"
     log_info "Speed test complete: ${SPEED_MBPS} Mbps (${SIZE_DL} bytes in ${TIME_TOTAL}s)"
 elif [ "$CURL_EXIT" -eq 28 ]; then

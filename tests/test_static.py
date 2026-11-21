@@ -64,3 +64,12 @@ def test_healthcheck_sh_delegates_to_python():
 def test_no_old_default_target_left():
     for name in ('watchdog.py', 'pgwhealth.py', 'healthcheck.py'):
         assert not re.search(r'["\']http://1\.1\.1\.1/?["\']', read(os.path.join(SCRIPTS, name))), name
+
+
+def test_speedtest_caps_download_and_requires_2xx():
+    import pathlib
+    s = pathlib.Path(__file__).resolve().parent.parent.joinpath(
+        "src/opnsense/scripts/OPNsense/ProxyGateway/speedtest.sh").read_text()
+    assert '--range "0-$((MAX_BYTES - 1))"' in s
+    assert '[ "$HTTP_CODE" = "206" ]' in s
+    assert '"$HTTP_CODE" != "000" ]; then' not in s
