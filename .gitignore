@@ -14,3 +14,4 @@ work/
 # IDE
 .vscode/
 .idea/
+.pytest_cache/

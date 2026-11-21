@@ -21,7 +21,7 @@ EXTRA_MARKER = "# --- EXTRA_CONFIG ---"
 HOT_KEYS = {
     "uuid", "enabled", "healthCheckEnabled", "healthCheckTarget",
     "speedTestUrl", "gatewayPriority", "failoverThreshold",
-    "failbackEnabled", "autoForceDown",
+    "failbackEnabled", "failbackThreshold", "autoForceDown",
 }
 
 
@@ -112,6 +112,7 @@ def write_extra_config(conn):
         extra.append(conf_line("BACKUP_PROXY_PORT", conn.get("backupProxyPort", "1080")))
         extra.append(conf_line("FAILOVER_THRESHOLD", conn.get("failoverThreshold", "3")))
         extra.append(conf_line("FAILBACK_ENABLED", conn.get("failbackEnabled", "1")))
+        extra.append(conf_line("FAILBACK_THRESHOLD", conn.get("failbackThreshold", "3")))
         # Backup credentials are not written here: watchdog.py reads them
         # from desired.json, and nothing consumes them from the .conf.
 

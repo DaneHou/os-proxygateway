@@ -411,6 +411,7 @@ function proxygateway_generate_desired($mdl = null)
             'backupAuthUser'      => (string)$conn->backupAuthUser,
             'backupAuthPass'      => (string)$conn->backupAuthPass,
             'failoverThreshold'   => (string)$conn->failoverThreshold,
+            'failbackThreshold'   => (string)$conn->failbackThreshold,
             'failbackEnabled'     => (string)$conn->failbackEnabled,
             'autoForceDown'       => (string)$mdl->general->autoForceDown,
             'ssMethod'            => (string)$conn->ssMethod,

@@ -135,7 +135,7 @@
         <label>Target URL</label>
         <type>text</type>
         <style>health_fields</style>
-        <help>URL fetched through the proxy for health checks. Any HTTP response counts as healthy; only a timeout or connection failure counts as a failure. Leave empty for default (http://1.1.1.1/).</help>
+        <help>URL fetched through the proxy for health checks. Any HTTP response counts as healthy; only a timeout or connection failure counts as a failure. The probe is sent through the tunnel when the firewall routes it there, otherwise straight to the proxy. Leave empty for default (https://www.baidu.com/).</help>
     </field>
     <field>
         <type>header</type>
@@ -228,7 +228,14 @@
         <label>Failover Threshold</label>
         <type>text</type>
         <style>backup_fields</style>
-        <help>Number of consecutive health check failures before switching to the backup proxy (1-10).</help>
+        <help>Number of consecutive health check failures before switching to the backup proxy (1-10). The switch only happens if the backup proxy itself answers a probe at that moment.</help>
+    </field>
+    <field>
+        <id>connection.failbackThreshold</id>
+        <label>Failback Threshold</label>
+        <type>text</type>
+        <style>backup_fields</style>
+        <help>Number of consecutive successful probes of the primary proxy (after a 5-minute cooldown) before switching back to it (1-10).</help>
     </field>
     <field>
         <id>connection.failbackEnabled</id>

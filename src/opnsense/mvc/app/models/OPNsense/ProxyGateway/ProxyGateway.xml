@@ -1,6 +1,6 @@
 <model>
     <mount>//OPNsense/ProxyGateway</mount>
-    <version>0.4.1</version>
+    <version>0.4.2</version>
     <description>Multi-Proxy Gateway Configuration</description>
 
     <items>
@@ -247,6 +247,11 @@
                     <MinimumValue>1</MinimumValue>
                     <MaximumValue>10</MaximumValue>
                 </failoverThreshold>
+                <failbackThreshold type="IntegerField">
+                    <default>3</default>
+                    <MinimumValue>1</MinimumValue>
+                    <MaximumValue>10</MaximumValue>
+                </failbackThreshold>
                 <failbackEnabled type="BooleanField">
                     <default>1</default>
                 </failbackEnabled>

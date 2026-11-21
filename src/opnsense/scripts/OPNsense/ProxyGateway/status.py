@@ -199,6 +199,14 @@ def get_status():
         conn_status["consecutive_failures"] = failover.get("consecutive_failures", 0)
         conn_status["switch_count"] = failover.get("switch_count", 0)
         conn_status["backup_enabled"] = config.get("BACKUP_ENABLED", "0") == "1"
+        # up | down | unknown (never probed / cannot be probed directly)
+        conn_status["backup_status"] = failover.get("backup_status", "unknown")
+        conn_status["backup_checked_at"] = failover.get("backup_checked_at")
+        conn_status["backup_reason"] = failover.get("backup_reason", "")
+        # tun = probe went through the tunnel; proxy = straight to the proxy
+        # because pf would not route a tunnel probe through the tunnel
+        conn_status["health_mode"] = health.get("mode", "")
+        conn_status["tun_path"] = health.get("tun_path", "")
         conn_status["gateway_forced_down"] = False  # TODO: could read from config.xml but expensive
 
         connections.append(conn_status)

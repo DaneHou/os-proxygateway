@@ -1,5 +1,5 @@
 PLUGIN_NAME=	os-proxygateway
-PLUGIN_VERSION=	1.2.0
+PLUGIN_VERSION=	1.3.0
 PLUGIN_ARCH?=	freebsd-amd64
 
 TUN2SOCKS_VERSION=	2.6.0
@@ -144,6 +144,8 @@ activate:
 	# Flush menu cache (MenuSystem.php caches to /var/lib/php/tmp/)
 	@rm -f /var/lib/php/tmp/opnsense_menu_cache.xml 2>/dev/null || true
 	@rm -f /tmp/opnsense_menu_cache.xml 2>/dev/null || true
+	# Flush compiled Volt templates (a stale cache ignores .volt changes)
+	@rm -f /var/lib/php/cache/*[Pp]roxy[Gg]ateway*.php 2>/dev/null || true
 	# Apply model migrations (e.g. M0_4_1 converts removed proxy types)
 	@if [ -x /usr/local/opnsense/mvc/script/run_migrations.php ]; then \
 		/usr/local/opnsense/mvc/script/run_migrations.php; \

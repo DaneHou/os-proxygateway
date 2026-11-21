@@ -160,6 +160,30 @@
                             proxyCell.append(' ');
                             proxyCell.append($('<span class="label label-warning">').text('BACKUP'));
                         }
+                        // A dead backup is shown, not offered: the watchdog only
+                        // switches to a backup whose own probe succeeds.
+                        if (conn.backup_enabled && conn.active_proxy !== 'backup') {
+                            if (conn.backup_status === 'down') {
+                                proxyCell.append(' ');
+                                proxyCell.append($('<span class="label label-danger">').text('BACKUP DOWN')
+                                    .attr('title', conn.backup_reason || 'Backup proxy failed its probe'));
+                            } else if (conn.backup_status !== 'up') {
+                                proxyCell.append(' ');
+                                proxyCell.append($('<span class="label label-default">').text('backup unknown')
+                                    .attr('title', conn.backup_reason || 'Backup proxy not probed yet'));
+                            }
+                        }
+                        // Health probe did not go through the tunnel itself
+                        if (conn.tun_path && conn.tun_path !== 'ok') {
+                            var tunHints = {
+                                'nat_leak': 'Health probe sent straight to the proxy: outbound NAT on another interface covers this tunnel address, so a probe bound to the tunnel would leave via WAN. Add a "Do not NAT" outbound rule for the tunnel address to test the tunnel itself.',
+                                'no_route_to': 'Health probe sent straight to the proxy: no firewall rule routes traffic from the tunnel address into the tunnel.',
+                                'unknown': 'Health probe sent straight to the proxy: the firewall rules could not be evaluated.'
+                            };
+                            proxyCell.append(' ');
+                            proxyCell.append($('<span class="label label-info">').text('probe: proxy only')
+                                .attr('title', tunHints[conn.tun_path] || tunHints['unknown']));
+                        }
                         row.append(proxyCell);
                         row.append($('<td>').html(statusIcon + ' ' + statusText));
                         var latencyCell = $('<td>');

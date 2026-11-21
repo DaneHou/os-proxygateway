@@ -6,8 +6,20 @@ watchdog.py — Monitor enabled connections and restart crashed tun2socks proces
 Designed to be called periodically via cron (every 60s by default).
 Reads /var/run/proxygateway/desired.json for enabled connections,
 checks if their tun2socks process is alive, and restarts dead ones.
+
+Failover uses hysteresis: failoverThreshold (N) consecutive failed health
+checks before leaving the active proxy, failbackThreshold (M) consecutive
+successful primary probes (after a cooldown) before failing back. A backup
+is only switched to when its own direct probe succeeds at that moment; a dead
+backup is recorded as backup_status=down in the .failover state instead of
+being a candidate.
+
+--dry-run runs the health checks and the decision logic but never restarts,
+switches, forces a gateway down/up or saves state; it only logs what it
+would do.
 """
 
+import argparse
 import json
 import logging
 import os
@@ -17,17 +29,22 @@ import time
 import urllib.parse
 
 import pgwconf
+import pgwhealth
 
 RUNDIR = "/var/run/proxygateway"
 LOGDIR = "/var/log/proxygateway"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SETUP_SCRIPT = os.path.join(SCRIPT_DIR, "setup.sh")
 TEARDOWN_SCRIPT = os.path.join(SCRIPT_DIR, "teardown.sh")
-HEALTHCHECK_SCRIPT = os.path.join(SCRIPT_DIR, "healthcheck.sh")
 DESIRED_CONFIG = os.path.join(RUNDIR, "desired.json")
 
 FAILOVER_COOLDOWN = 300  # 5 minutes cooldown after switch
-FAILBACK_PROBE_REQUIRED = 2  # consecutive OK probes before failback
+DEFAULT_FAILOVER_THRESHOLD = 3  # N: consecutive failures before switching
+DEFAULT_FAILBACK_THRESHOLD = 3  # M: consecutive OK primary probes before failback
+BACKUP_PROBE_INTERVAL = 300  # probe an idle backup at most this often
+
+# Set by --dry-run: decide and log, but change nothing.
+DRY_RUN = False
 
 LOG_FORMAT = "%(asctime)s [%(levelname)-5s] [%(name)-10s] %(message)s"
 LOG_DATEFMT = "%Y-%m-%dT%H:%M:%SZ"
@@ -91,6 +108,9 @@ def check_connection(name):
 def restart_connection(conn):
     """Restart a single dead connection via setup.sh."""
     name = conn["name"]
+    if DRY_RUN:
+        log.info("[dry-run] would restart dead connection %s", name)
+        return False
     log.info("Restarting dead connection: %s", name)
 
     # Clean up stale files before restart. setup.sh starts on the primary
@@ -170,6 +190,9 @@ def load_failover_state(name):
         "switch_count": 0,
         "primary_probe_ok_count": 0,
         "forced_down": False,
+        "backup_status": "unknown",
+        "backup_checked_at": None,
+        "backup_reason": "",
     }
     if not os.path.isfile(state_file):
         return default
@@ -187,6 +210,8 @@ def load_failover_state(name):
 def save_failover_state(name, state):
     """Save failover state to JSON file (atomically, so readers never see
     a half-written file)."""
+    if DRY_RUN:
+        return
     state_file = os.path.join(RUNDIR, f"{name}.failover")
     tmp = f"{state_file}.tmp"
     with open(tmp, "w") as f:
@@ -195,40 +220,63 @@ def save_failover_state(name, state):
 
 
 def probe_proxy_directly(conn, proxy_type, server, port, auth_user="", auth_pass=""):
-    """Probe a proxy server directly (not through TUN) using curl --proxy."""
-    if proxy_type in ("socks5", "socks5tls"):
-        scheme = "socks5h"
-    elif proxy_type in ("http", "https"):
-        scheme = "http"
-    else:
-        # curl cannot speak Shadowsocks, so there is no direct probe
+    """Probe a proxy server directly (not through TUN) using curl --proxy.
+
+    Returns "up", "down" or "unknown" (curl cannot speak Shadowsocks).
+    """
+    proxy_url = pgwhealth.build_proxy_url(proxy_type, server, port, auth_user, auth_pass)
+    if not proxy_url:
         log.debug("No direct probe available for proxy type %s", proxy_type)
-        return False
+        return "unknown"
+    target = conn.get("healthCheckTarget", "") or pgwhealth.DEFAULT_TARGET
+    probe = pgwhealth.curl_probe(target, pgwhealth.DEFAULT_TIMEOUT, proxy_url=proxy_url)
+    return "up" if pgwhealth.is_http_ok(probe["http_code"]) else "down"
 
-    userinfo = ""
-    if auth_user and auth_pass:
-        userinfo = (urllib.parse.quote(auth_user, safe="") + ":"
-                    + urllib.parse.quote(auth_pass, safe="") + "@")
-    proxy_url = f"{scheme}://{userinfo}{server}:{port}"
 
-    target = conn.get("healthCheckTarget", "") or "http://1.1.1.1/"
+def probe_primary(conn):
+    auth = conn.get("authEnabled") == "1"
+    return probe_proxy_directly(
+        conn,
+        conn.get("proxyType", "socks5"),
+        conn.get("proxyServer", ""),
+        conn.get("proxyPort", "1080"),
+        conn.get("authUser", "") if auth else "",
+        conn.get("authPass", "") if auth else "",
+    )
 
-    # Pass the proxy URL through a curl config on stdin so the credentials
-    # don't show up in ps(1) output. Escape for curl's quoted-string syntax.
-    curl_cfg = 'proxy = "%s"\n' % proxy_url.replace("\\", "\\\\").replace('"', '\\"')
 
-    try:
-        result = subprocess.run(
-            ["/usr/local/bin/curl", "-K", "-", "-s", "-o", "/dev/null",
-             "-w", "%{http_code}",
-             "--connect-timeout", "10", "--max-time", "10",
-             "--", target],
-            input=curl_cfg, capture_output=True, text=True, timeout=15
-        )
-        http_code = result.stdout.strip()
-        return http_code != "000" and http_code != ""
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return False
+def probe_backup(conn):
+    auth = conn.get("backupAuthEnabled") == "1"
+    return probe_proxy_directly(
+        conn,
+        conn.get("backupProxyType", "socks5"),
+        conn.get("backupProxyServer", ""),
+        conn.get("backupProxyPort", "1080"),
+        conn.get("backupAuthUser", "") if auth else "",
+        conn.get("backupAuthPass", "") if auth else "",
+    )
+
+
+def update_backup_status(name, conn, state, now, force):
+    """Probe the backup (always when force, else at most every
+    BACKUP_PROBE_INTERVAL) and record the result in the state.
+    Returns the current backup_status."""
+    checked = state.get("backup_checked_at") or 0
+    if not force and now - checked < BACKUP_PROBE_INTERVAL:
+        return state.get("backup_status", "unknown")
+    status = probe_backup(conn)
+    if status == "unknown":
+        reason = "backup proxy type cannot be probed directly"
+    elif status == "down":
+        reason = "direct probe through the backup proxy failed"
+    else:
+        reason = ""
+    if status != state.get("backup_status"):
+        log.info("%s: backup proxy is %s%s", name, status, f" ({reason})" if reason else "")
+    state["backup_status"] = status
+    state["backup_checked_at"] = now
+    state["backup_reason"] = reason
+    return status
 
 
 def switch_proxy(name, conn, to_backup):
@@ -237,6 +285,9 @@ def switch_proxy(name, conn, to_backup):
     Tears down the current tun2socks and restarts with different proxy params.
     The TUN interface/IP/gateway stay the same — only upstream proxy changes.
     """
+    if DRY_RUN:
+        log.info("[dry-run] would switch %s to %s proxy", name, "backup" if to_backup else "primary")
+        return True
     log.info("Switching %s to %s proxy", name, "backup" if to_backup else "primary")
 
     # Teardown current connection
@@ -328,6 +379,9 @@ def force_down_gateway(name, down):
     Returns True on success.
     """
     action = "down" if down else "up"
+    if DRY_RUN:
+        log.info("[dry-run] would set gateway force_%s for %s", action, name)
+        return True
     try:
         result = subprocess.run(
             ["/usr/local/sbin/configctl", "proxygateway", "forcedown", name, action],
@@ -359,19 +413,35 @@ def set_forced_down(name, state, down):
         state["forced_down"] = down
 
 
-def check_failover(name, conn, health_ok):
+def _int(value, default):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _mark_switched(state, to_backup, now):
+    state["active_proxy"] = "backup" if to_backup else "primary"
+    state["consecutive_failures"] = 0
+    state["switched_at"] = now
+    state["switch_count"] += 1
+    state["primary_probe_ok_count"] = 0
+
+
+def check_failover(name, conn, health_ok, now=None):
     """Check and manage failover state for a connection.
 
     Called after each health check with the result.
-    Handles: consecutive failure counting, switching to backup,
-    probing primary for failback, force-down gateway.
+    Handles: consecutive failure counting (N), switching to a backup that
+    probes healthy, probing primary for failback (M), force-down gateway.
     """
     state = load_failover_state(name)
-    backup_enabled = conn.get("backupEnabled") == "1" and conn.get("backupProxyServer")
+    backup_enabled = conn.get("backupEnabled") == "1" and bool(conn.get("backupProxyServer"))
     auto_force_down = conn.get("autoForceDown", "1") == "1"
-    threshold = int(conn.get("failoverThreshold", "3"))
+    threshold = _int(conn.get("failoverThreshold"), DEFAULT_FAILOVER_THRESHOLD)
+    failback_needed = _int(conn.get("failbackThreshold"), DEFAULT_FAILBACK_THRESHOLD)
     failback = conn.get("failbackEnabled", "1") == "1"
-    now = int(time.time())
+    now = int(time.time()) if now is None else now
 
     # Mutual exclusion with reconfigure is handled by the lockf(1) lock
     # taken in watchdog.sh / reconfigure.sh.
@@ -385,111 +455,119 @@ def check_failover(name, conn, health_ok):
         if not health_ok:
             state["consecutive_failures"] += 1
             log.warning("%s: primary health check failed (%d/%d)",
-                       name, state["consecutive_failures"], threshold)
+                        name, state["consecutive_failures"], threshold)
+            # While primary is failing, know whether the backup works now
+            backup_status = (update_backup_status(name, conn, state, now, force=True)
+                             if backup_enabled else "disabled")
 
             if state["consecutive_failures"] >= threshold:
-                if backup_enabled:
-                    # Switch to backup
+                if backup_enabled and backup_status == "up":
                     if switch_proxy(name, conn, to_backup=True):
-                        state["active_proxy"] = "backup"
-                        state["consecutive_failures"] = 0
-                        state["switched_at"] = now
-                        state["switch_count"] += 1
-                        state["primary_probe_ok_count"] = 0
+                        _mark_switched(state, True, now)
                         log.info("%s: switched to backup proxy (switch #%d)",
-                                name, state["switch_count"])
+                                 name, state["switch_count"])
                     else:
                         log.error("%s: failed to switch to backup", name)
                         if auto_force_down:
                             set_forced_down(name, state, True)
-                elif auto_force_down and not state.get("forced_down"):
-                    # No backup — force down the gateway
-                    set_forced_down(name, state, True)
-                    log.info("%s: no backup configured, gateway forced down", name)
+                else:
+                    if backup_enabled:
+                        log.warning("%s: backup proxy is %s, not switching to it",
+                                    name, backup_status)
+                    if auto_force_down and not state.get("forced_down"):
+                        set_forced_down(name, state, True)
+                        log.info("%s: no working backup, gateway forced down", name)
         else:
             if state["consecutive_failures"] > 0:
                 log.info("%s: primary recovered after %d failures",
-                        name, state["consecutive_failures"])
+                         name, state["consecutive_failures"])
             state["consecutive_failures"] = 0
+            if backup_enabled:
+                update_backup_status(name, conn, state, now, force=False)
 
     elif state["active_proxy"] == "backup":
         if not health_ok:
             state["consecutive_failures"] += 1
             log.warning("%s: backup health check failed (%d/%d)",
-                       name, state["consecutive_failures"], threshold)
+                        name, state["consecutive_failures"], threshold)
 
             if state["consecutive_failures"] >= threshold:
-                # Backup also failing — try switching back to primary as last resort
-                log.warning("%s: backup also failing, attempting primary as last resort", name)
-                if switch_proxy(name, conn, to_backup=False):
-                    state["active_proxy"] = "primary"
-                    state["consecutive_failures"] = 0
-                    state["switched_at"] = now
-                    state["switch_count"] += 1
-                    state["primary_probe_ok_count"] = 0
+                state["backup_status"] = "down"
+                state["backup_checked_at"] = now
+                state["backup_reason"] = "health check on backup failed"
+                # Only go back to primary if primary itself works now
+                if probe_primary(conn) == "up":
+                    log.warning("%s: backup failing, primary probes OK, switching back", name)
+                    if switch_proxy(name, conn, to_backup=False):
+                        _mark_switched(state, False, now)
+                    elif auto_force_down:
+                        set_forced_down(name, state, True)
                 else:
+                    log.warning("%s: backup failing and primary down too, staying", name)
                     if auto_force_down:
                         set_forced_down(name, state, True)
         else:
             state["consecutive_failures"] = 0
+            state["backup_status"] = "up"
+            state["backup_checked_at"] = now
+            state["backup_reason"] = ""
 
             # Probe primary for failback
             if failback:
-                # Cooldown check
                 switched_at = state.get("switched_at") or 0
                 if now - switched_at < FAILOVER_COOLDOWN:
                     log.debug("%s: in cooldown period, skipping primary probe", name)
+                elif probe_primary(conn) == "up":
+                    state["primary_probe_ok_count"] += 1
+                    log.info("%s: primary probe OK (%d/%d)",
+                             name, state["primary_probe_ok_count"], failback_needed)
+                    if state["primary_probe_ok_count"] >= failback_needed:
+                        if switch_proxy(name, conn, to_backup=False):
+                            _mark_switched(state, False, now)
+                            log.info("%s: failed back to primary proxy", name)
+                        else:
+                            log.error("%s: failback to primary failed", name)
                 else:
-                    # Probe primary directly (not through TUN)
-                    primary_ok = probe_proxy_directly(
-                        conn,
-                        conn.get("proxyType", "socks5"),
-                        conn.get("proxyServer", ""),
-                        conn.get("proxyPort", "1080"),
-                        conn.get("authUser", "") if conn.get("authEnabled") == "1" else "",
-                        conn.get("authPass", "") if conn.get("authEnabled") == "1" else "",
-                    )
-
-                    if primary_ok:
-                        state["primary_probe_ok_count"] += 1
-                        log.info("%s: primary probe OK (%d/%d)",
-                                name, state["primary_probe_ok_count"], FAILBACK_PROBE_REQUIRED)
-
-                        if state["primary_probe_ok_count"] >= FAILBACK_PROBE_REQUIRED:
-                            # Switch back to primary
-                            if switch_proxy(name, conn, to_backup=False):
-                                state["active_proxy"] = "primary"
-                                state["consecutive_failures"] = 0
-                                state["switched_at"] = now
-                                state["switch_count"] += 1
-                                state["primary_probe_ok_count"] = 0
-                                log.info("%s: failed back to primary proxy", name)
-                            else:
-                                log.error("%s: failback to primary failed", name)
-                    else:
-                        state["primary_probe_ok_count"] = 0
+                    state["primary_probe_ok_count"] = 0
 
     save_failover_state(name, state)
+    return state
 
 
 def run_healthcheck(name):
-    """Run health check after restart. Returns True if healthy."""
-    cmd = ["/bin/sh", HEALTHCHECK_SCRIPT, name]
+    """Run the health check (pgwhealth) for a connection. Returns True if healthy.
+
+    In dry-run mode nothing is written (no .status file, no history line).
+    """
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
-        if result.returncode == 0:
-            log.info("Health check passed for %s: %s", name, result.stdout.strip())
-            return True
-        else:
-            log.warning("Health check failed for %s: %s", name, result.stdout.strip())
-            return False
-    except subprocess.TimeoutExpired:
-        log.warning("Health check timed out for %s", name)
+        result = pgwhealth.check(name)
+    except Exception as e:  # never let one connection stop the watchdog
+        log.warning("Health check error for %s: %s", name, e)
         return False
+    now = time.time()
+    if DRY_RUN:
+        level, text = pgwhealth.log_message(result)
+        line = pgwhealth.format_log_line(level, name, text, now)
+    else:
+        line = pgwhealth.record(name, result, now)
+    if result["ok"]:
+        log.info("Health check passed for %s: %s", name, line)
+        return True
+    log.warning("Health check failed for %s: %s", name, line)
+    return False
 
 
-def main():
+def main(argv=None):
+    global DRY_RUN
+    parser = argparse.ArgumentParser(description="Proxy Gateway watchdog")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="check and decide, but change nothing (log only)")
+    args = parser.parse_args(argv)
+    DRY_RUN = args.dry_run
+
     setup_logging()
+    if DRY_RUN:
+        log.info("[dry-run] no restarts, switches, force-down or state writes")
 
     enabled = get_enabled_connections()
     if not enabled:
@@ -514,10 +592,11 @@ def main():
                 run_healthcheck(name)
 
         # Reconfigure routes after restarts
-        subprocess.run(
-            ["/usr/local/sbin/configctl", "interface", "routes", "reconfigure"],
-            capture_output=True, timeout=30
-        )
+        if not DRY_RUN:
+            subprocess.run(
+                ["/usr/local/sbin/configctl", "interface", "routes", "reconfigure"],
+                capture_output=True, timeout=30
+            )
 
     # Periodic health checks for alive connections
     for name in alive_to_check:
@@ -525,7 +604,13 @@ def main():
         conn = enabled[name]
         # Check failover state if backup is configured or auto-force-down is enabled
         if conn.get("backupEnabled") == "1" or conn.get("autoForceDown", "1") == "1":
-            check_failover(name, conn, health_ok)
+            state = check_failover(name, conn, health_ok)
+            if DRY_RUN:
+                log.info("[dry-run] %s: state would be active=%s failures=%d "
+                         "primary_ok=%d backup=%s forced_down=%s", name,
+                         state["active_proxy"], state["consecutive_failures"],
+                         state["primary_probe_ok_count"], state.get("backup_status"),
+                         state.get("forced_down"))
 
     if restarted:
         log.info("Watchdog restarted %d connection(s): %s",

@@ -3,6 +3,22 @@
 Plugin versions (Makefile `PLUGIN_VERSION`) are listed here. The MVC model
 schema has its own version (`ProxyGateway.xml`), noted where it changed.
 
+## [1.3.0] - 2026-11-21
+
+Model schema 0.4.2 (new field `failbackThreshold`, default 3; no migration).
+
+### Changed
+
+- **Health check tests the tunnel** — the probe is sent through the tunnel (`curl --interface pgw_NAME`) when the firewall really routes it there. If outbound NAT on another interface covers the tunnel address (then a tunnel-bound probe silently leaves via WAN) or the force-gateway `route-to` rule is missing, the probe goes straight to the proxy instead and is labelled `mode=proxy`, `tun_path=nat_leak|no_route_to`. Logic moved to `pgwhealth.py`/`healthcheck.py`; `healthcheck.sh` is a wrapper.
+- **Default probe target** is `https://www.baidu.com/` (was `http://1.1.1.1/`, which intermittently returned empty replies through a China exit).
+- **Failover hysteresis** — N (`failoverThreshold`) consecutive failures before switching, M (`failbackThreshold`, new) consecutive primary probes after the cooldown before failing back.
+- **Backup must work before it is used** — the watchdog probes the backup proxy directly and only switches when that probe succeeds. A dead backup is recorded as `backup_status=down` (shown as "BACKUP DOWN" on Diagnostics) and the gateway is forced down instead. When the backup fails, the watchdog returns to primary only if primary probes OK. Shadowsocks backups cannot be probed directly and are never switched to automatically.
+
+### Added
+
+- `watchdog.py --dry-run` — runs the checks and the failover decision, logs what it would do, changes nothing.
+- `tests/` (pytest).
+
 ## [1.2.0] - 2026-09-24
 
 Model schema 0.4.1 (migration M0_4_1). The first Apply after upgrading
