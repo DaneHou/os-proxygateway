@@ -247,7 +247,7 @@ ifconfig "$IFACE" group proxygateway 2>/dev/null || true
 
 # Step 3: Configure the interface
 log_info "Configuring $IFACE: ${TUN_LOCAL} <-> ${TUN_PEER} mtu ${TUN_MTU}"
-ifconfig "$IFACE" inet "$TUN_LOCAL" "$TUN_PEER" mtu "$TUN_MTU" up
+ifconfig "$IFACE" inet "${TUN_LOCAL}/32" "$TUN_PEER" mtu "$TUN_MTU" up
 log_debug "Device ${IFACE} configured: ${TUN_LOCAL}/${TUN_PEER}"
 
 # Step 4: Write router and monitor files for OPNsense gateway auto-detection
