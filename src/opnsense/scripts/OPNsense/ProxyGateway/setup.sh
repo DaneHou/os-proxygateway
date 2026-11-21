@@ -193,7 +193,11 @@ if ifconfig "$IFACE" >/dev/null 2>&1; then
 fi
 
 # Step 2: Start tun2socks with the final interface name directly.
-log_info "Starting tun2socks (device=$IFACE, loglevel: ${LOGLEVEL})..."
+# tun2socks logs every connection at "info"; only pass debug through, otherwise
+# keep it at warn so the long-running process does not flood ${LOGFILE}.
+T2S_LOGLEVEL="warn"
+[ "$LOGLEVEL" = "debug" ] && T2S_LOGLEVEL="debug"
+log_info "Starting tun2socks (device=$IFACE, loglevel: ${T2S_LOGLEVEL})..."
 
 # The proxy URL (with credentials) is passed via a 0600 YAML config file
 # instead of -proxy, so it never shows up in ps(1) output. tun2socks applies
@@ -204,16 +208,29 @@ chmod 600 "$T2S_CONFIG"
 if [ "$PROXY_TYPE" = "socks5" ] || [ "$PROXY_TYPE" = "socks5tls" ] || [ "$PROXY_TYPE" = "ss" ]; then
     # SOCKS5: add UDP timeout for UDP relay support
     log_debug "Using UDP timeout (300s) for SOCKS5 proxy"
-    "$TUN2SOCKS" -config "$T2S_CONFIG" -device "$IFACE" -loglevel "$LOGLEVEL" \
+    "$TUN2SOCKS" -config "$T2S_CONFIG" -device "$IFACE" -loglevel "$T2S_LOGLEVEL" \
         -tcp-sndbuf 256KB -tcp-rcvbuf 256KB -tcp-auto-tuning \
         -udp-timeout 300s >> "$LOGFILE" 2>&1 &
 else
-    "$TUN2SOCKS" -config "$T2S_CONFIG" -device "$IFACE" -loglevel "$LOGLEVEL" \
+    "$TUN2SOCKS" -config "$T2S_CONFIG" -device "$IFACE" -loglevel "$T2S_LOGLEVEL" \
         -tcp-sndbuf 256KB -tcp-rcvbuf 256KB -tcp-auto-tuning >> "$LOGFILE" 2>&1 &
 fi
 
 T2S_PID=$!
 echo "$T2S_PID" > "$PIDFILE"
+
+# If a later step fails under `set -e`, do not leave an orphan tun2socks, a
+# stale pid file or a half-configured interface behind: that combination made
+# every later setup refuse to start ("Connection already running").
+_pgw_setup_cleanup() {
+    rc=$?
+    [ "$rc" -eq 0 ] && return 0
+    kill "$T2S_PID" 2>/dev/null || true
+    rm -f "$PIDFILE"
+    ifconfig "$IFACE" destroy 2>/dev/null || true
+    log_error "Setup failed (exit $rc); cleaned up tun2socks and ${IFACE}"
+}
+trap _pgw_setup_cleanup EXIT
 log_debug "tun2socks spawned with PID $T2S_PID"
 
 # Wait for tun2socks to create the interface (poll every 0.25s, max 5s)
