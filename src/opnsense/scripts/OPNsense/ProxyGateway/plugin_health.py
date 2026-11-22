@@ -44,7 +44,7 @@ REPAIR_MAX_PER_HOUR = 3          # keep in sync with pgwrepair.REPAIR_MAX_PER_HO
 
 
 def restart_fix(name):
-    return {"action": f"proxygateway restartconn {name}",
+    return {"action": f"proxygateway restart_conn {name}",
             "title": f"Restart the {name} tunnel (tun2socks)"}
 
 
