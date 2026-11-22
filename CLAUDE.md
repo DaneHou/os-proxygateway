@@ -44,7 +44,9 @@ src/
 │   │   ├── reconfigure.py               # Orchestrates setup/teardown based on desired.json
 │   │   ├── pgwconf.py                   # Shared .conf read/write, config hash, failover state reset
 │   │   ├── status.py                    # Get connection statuses (traffic, uptime, failover)
-│   │   ├── healthcheck.sh              # HTTP-based connectivity probe
+│   │   ├── healthcheck.sh              # HTTP-based connectivity probe (configctl proxygateway probe NAME)
+│   │   ├── plugin_health.py            # configctl proxygateway healthcheck (read-only, os-netbaseline contract)
+│   │   ├── gateway_health.php          # gateway list + dpinger status for plugin_health.py
 │   │   ├── watchdog.py                  # Periodic monitoring: PID check, health check, failover
 │   │   ├── gateway_force_down.php       # Set gateway force_down via OPNsense Config API
 │   │   ├── speedtest.sh                # Run speed test through proxy

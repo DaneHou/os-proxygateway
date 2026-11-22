@@ -111,7 +111,7 @@ class DiagnosticsController extends ApiControllerBase
             }
 
             $backend = new \OPNsense\Core\Backend();
-            $response = trim($backend->configdRun("proxygateway healthcheck {$name}"));
+            $response = trim($backend->configdRun("proxygateway probe {$name}"));
 
             $result = [
                 'status' => 'ok',

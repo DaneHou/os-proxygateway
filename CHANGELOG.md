@@ -3,6 +3,16 @@
 Plugin versions (Makefile `PLUGIN_VERSION`) are listed here. The MVC model
 schema has its own version (`ProxyGateway.xml`), noted where it changed.
 
+## [1.4.0] - 2026-11-21
+
+### Added
+
+- **`configctl proxygateway healthcheck`** — read-only health summary in the os-netbaseline plugin health contract (`{"checks": [{name, ok, severity, detail}]}`), so the Netbaseline checkup reports Proxy Gateway problems. Per enabled connection: tun2socks process alive, `pgw_NAME` up/running, the watchdog's last connectivity probe (stale after 15 min) and failover state (forced down / on backup), and the OPNsense gateway on `pgw_NAME` with its dpinger status (`gateway_health.php`). Sends no traffic, prints no proxy addresses or credentials.
+
+### Changed
+
+- The per-connection connectivity probe action is renamed from `healthcheck NAME` to **`probe NAME`** (`configctl proxygateway probe NAME`); the Diagnostics page uses the new name. `healthcheck` without parameters is now the summary above.
+
 ## [1.3.0] - 2026-11-21
 
 Model schema 0.4.2 (new field `failbackThreshold`, default 3; no migration).

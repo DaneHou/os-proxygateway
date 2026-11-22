@@ -5,7 +5,7 @@
 # Exit code: 0 = healthy, 1 = unhealthy
 #
 # Kept as the stable entry point for configd ("configctl proxygateway
-# healthcheck NAME") and reconfigure.py; the logic lives in healthcheck.py /
+# probe NAME") and reconfigure.py; the logic lives in healthcheck.py /
 # pgwhealth.py (tunnel probe when pf really routes it through the tunnel,
 # direct proxy probe otherwise).
 
