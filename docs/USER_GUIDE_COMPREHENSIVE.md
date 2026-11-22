@@ -1389,7 +1389,13 @@ is down is done with the gateway force-down plus standard OPNsense settings.
    Check** on the connection and **Auto-reconnect (Watchdog)** globally)
 2. After *Failover Threshold* consecutive failures with no working backup, it
    sets the gateway `PROXYGW_<NAME>` to force-down (requires **Auto Force-Down
-   Gateway**), and clears it again once the proxy is healthy
+   Gateway**), and clears it again once the proxy is healthy. Only the
+   plugin's own `PROXYGW_` gateway is forced down: if you created your own
+   gateway on the connection's interface, the watchdog leaves it alone
+   (force-down would be a persistent config.xml change) and repairs the
+   tunnel instead (restart tun2socks, or the local proxy daemon; at most 3
+   restarts per hour). Repair steps are logged to the watchdog log and to the
+   system log (`/var/log/system/`, program `proxygateway`)
 3. What OPNsense does with a rule whose gateway is down depends on the firewall
    settings below
 

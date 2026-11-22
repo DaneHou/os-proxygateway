@@ -3,6 +3,20 @@
 Plugin versions (Makefile `PLUGIN_VERSION`) are listed here. The MVC model
 schema has its own version (`ProxyGateway.xml`), noted where it changed.
 
+## [1.5.0] - 2026-11-21
+
+### Fixed
+
+- **Watchdog probe really goes through the tunnel.** With automatic outbound NAT, WAN's NAT rule covers the tunnel network (`nat on igc0 from (pgw_X:network)`); pf applies NAT before filtering, so a request bound to the tunnel address was rewritten to the WAN address, the force-gateway `route-to` rule no longer matched, and the probe left via WAN (`tun_path=nat_leak`). Since 1.3.0 the probe then went to the proxy directly — a dead tun2socks was never noticed. Now the probe is *route-pinned*: the target is resolved to one IPv4 address, a host route to it via the tunnel peer exists only for that one request (`route add -host` / `route delete`, never touching an existing specific route), and curl connects to it (`--resolve`) bound to `pgw_NAME`. When pinning is impossible the proxy-direct fallback is marked `verified=0` (“UNVERIFIED”) and counts neither as tunnel success nor failure; the healthcheck reports it as unverified, not ok.
+- **Gateway resolution by device.** The watchdog looked only for `PROXYGW_<NAME>`; a connection whose interface carries a user-made gateway (e.g. `FRP_GW` on the assigned interface) had nothing to force down and retried every minute. Gateways are now resolved by device `pgw_NAME` (plus `PROXYGW_<NAME>` by name). Force-down is a persistent config.xml edit with no runtime equivalent in OPNsense (a monitor-disabled gateway's status comes only from `force_down`), so it is applied only to the plugin's own `PROXYGW_` gateways; for a foreign gateway the watchdog logs once that it skips the force-down and relies on the runtime chain repair below.
+
+### Added
+
+- **Tunnel repair.** After *Failover Threshold* (N, default 3) consecutive failed tunnel probes the watchdog checks the SOCKS step (direct probe of the active proxy) and restarts the least it has to: tun2socks when the proxy answers (or cannot be probed, e.g. Shadowsocks); the local proxy daemon (e.g. `sslocal` via `service sslocal-rust restart`) when the proxy is on this router, is a known proxy daemon and does not answer. A proxy elsewhere that does not answer is only logged. Backoff 2/4/8 min between restarts, at most 3 restarts per connection per hour. State in `/var/run/proxygateway/<name>.repair`.
+- **Syslog.** Repair steps, skipped force-downs and unverified probes go to syslog (ident `proxygateway`, priority notice or higher, so OPNsense's catch-all keeps them in `/var/log/system/`) in addition to `/var/log/proxygateway/watchdog.log`.
+- **`configctl proxygateway restartconn NAME`** — starts a connection whose tun2socks or interface is down (name validated against the enabled connections, shared lock with reconfigure/watchdog, no config.xml change); a running connection is left alone. The healthcheck's “tun2socks” and “interface” checks carry it as `"fix": {"action": "proxygateway restartconn NAME", "title": ...}` when they fail.
+- Healthcheck: `NAME: auto-repair` check (repair capped / failed / upstream not answering / recent restarts).
+
 ## [1.4.0] - 2026-11-21
 
 ### Added

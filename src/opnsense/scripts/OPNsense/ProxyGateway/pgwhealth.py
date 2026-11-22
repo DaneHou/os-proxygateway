@@ -12,15 +12,27 @@ also covers the tunnel network on WAN, and NAT is applied before the filter:
 the packet is rewritten to the WAN address, the route-to rule no longer
 matches and the "tunnel" probe silently leaves through WAN. predict_tun_path()
 reads the live pf ruleset and says whether a tunnel probe would really use the
-tunnel. If not, the probe goes to the proxy directly (curl --proxy) and the
-result is labelled mode=proxy, so a WAN request is never mistaken for a
-working tunnel.
+tunnel.
+
+If not (nat_leak / no_route_to / unknown), the probe is *route-pinned*: the
+target host is resolved to one IPv4 address, a temporary host route for that
+address via the tunnel peer is added for the duration of the single request
+(``route add -host IP PEER`` ... ``route delete``), and curl connects to that
+address (``--resolve``) bound to the tunnel. The kernel then picks pgw_NAME
+by destination, so outbound NAT on WAN never sees the packet and the request
+really traverses kernel -> tun -> tun2socks -> proxy. Only when pinning is
+impossible (name does not resolve, another specific route already covers the
+address, route add fails) does the probe fall back to the proxy directly
+(curl --proxy, mode=proxy) and the result is marked verified=False: the proxy
+works, the tunnel is *not* verified — a misconfigured probe is never mistaken
+for a working tunnel.
 """
 
 import ipaddress
 import json
 import os
 import re
+import socket
 import subprocess
 import time
 import urllib.parse
@@ -32,6 +44,7 @@ LOGDIR = "/var/log/proxygateway"
 CURL = "/usr/local/bin/curl"
 PFCTL = "/sbin/pfctl"
 IFCONFIG = "/sbin/ifconfig"
+ROUTE = "/sbin/route"
 
 # Lightweight page that answers quickly from most networks. The previous
 # default (http://1.1.1.1/) intermittently returned empty replies (curl exit
@@ -189,7 +202,7 @@ def mask_url(url):
     return re.sub(r"://[^@/]*@", "://***@", url or "")
 
 
-def curl_probe(target, timeout, proxy_url="", interface="", runner=subprocess.run):
+def curl_probe(target, timeout, proxy_url="", interface="", runner=subprocess.run, resolve=""):
     """Fetch ``target`` once. Returns dict(http_code, curl_exit, curl_err, latency_ms).
 
     The proxy URL (may contain credentials) is passed in a curl config on
@@ -199,6 +212,8 @@ def curl_probe(target, timeout, proxy_url="", interface="", runner=subprocess.ru
            "--connect-timeout", str(timeout), "--max-time", str(timeout)]
     if interface:
         cmd += ["--interface", interface]
+    if resolve:
+        cmd += ["--resolve", resolve]
     cmd += ["--", target]
     cfg = ""
     if proxy_url:
@@ -254,6 +269,119 @@ def build_proxy_url(proxy_type, server, port, user="", password=""):
 
 
 # --------------------------------------------------------------------------
+# Route-pinned tunnel probe
+# --------------------------------------------------------------------------
+
+def target_host_port(target):
+    """(host, port) of an http(s) URL; ('', 0) when it has no host."""
+    try:
+        u = urllib.parse.urlsplit(target)
+        port = u.port or (443 if u.scheme == "https" else 80)
+    except ValueError:
+        return "", 0
+    return (u.hostname or ""), port
+
+
+def resolve_ipv4(host, port, resolver=socket.getaddrinfo):
+    """First IPv4 address of host ('' when it does not resolve)."""
+    try:
+        ipaddress.IPv4Address(host)
+        return host
+    except ValueError:
+        pass
+    try:
+        for info in resolver(host, port, socket.AF_INET, socket.SOCK_STREAM):
+            addr = info[4][0]
+            ipaddress.IPv4Address(addr)
+            return addr
+    except (OSError, ValueError, IndexError):
+        pass
+    return ""
+
+
+def route_get(ip, runner=subprocess.run):
+    """``route -n get IP`` -> {'destination', 'gateway', 'interface'} or None."""
+    try:
+        res = runner([ROUTE, "-n", "get", ip], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if res.returncode != 0:
+        return None
+    out = {}
+    for line in (res.stdout or "").splitlines():
+        key, sep, val = line.strip().partition(":")
+        if sep and key in ("destination", "gateway", "interface"):
+            out[key] = val.strip()
+    return out or None
+
+
+def pin_route(ip, iface, peer, runner=subprocess.run):
+    """Make sure ``ip`` is routed via ``iface``. Returns (ok, added, reason).
+
+    Only touches the routing table when the address follows the default
+    route: an existing host/network route via another interface belongs to
+    someone else and is left alone (pin refused).
+    """
+    cur = route_get(ip, runner)
+    if cur and cur.get("interface") == iface:
+        return True, False, ""
+    if cur and cur.get("destination") not in ("default", "0.0.0.0"):
+        return False, False, f"{ip} already has a specific route via {cur.get('interface', '?')}"
+    try:
+        res = runner([ROUTE, "-n", "add", "-host", ip, peer], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return False, False, "route add failed"
+    if res.returncode != 0:
+        return False, False, "route add failed"
+    return True, True, ""
+
+
+def unpin_route(ip, peer, runner=subprocess.run):
+    try:
+        runner([ROUTE, "-n", "delete", "-host", ip, peer], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def pinned_probe(target, timeout, iface, peer, runner=subprocess.run, resolver=socket.getaddrinfo):
+    """Fetch ``target`` through the tunnel regardless of NAT/route-to rules.
+
+    Returns (probe_dict_with_'pinned', '') or (None, reason) when the probe
+    cannot be pinned to the tunnel.
+    """
+    host, port = target_host_port(target)
+    if not host or not peer:
+        return None, "no host or tunnel peer"
+    ip = resolve_ipv4(host, port, resolver)
+    if not ip:
+        return None, f"cannot resolve {host}"
+    ok, added, reason = pin_route(ip, iface, peer, runner)
+    if not ok:
+        return None, reason
+    try:
+        probe = curl_probe(target, timeout, interface=iface, runner=runner,
+                           resolve=f"{host}:{port}:{ip}")
+    finally:
+        if added:
+            unpin_route(ip, peer, runner)
+    probe["pinned"] = ip
+    return probe, ""
+
+
+def socks_step(conf, target="", timeout=DEFAULT_TIMEOUT, runner=subprocess.run):
+    """Probe the active proxy directly (bypassing tun2socks).
+
+    Returns "up", "down" or "unknown" (curl cannot speak the proxy type).
+    """
+    curl_proxy = proxy_curl_url(conf.get("PROXY_TYPE", ""), conf.get("PROXY_URL", ""))
+    if not curl_proxy:
+        return "unknown"
+    target = target or conf.get("HEALTH_TARGET") or DEFAULT_TARGET
+    probe = curl_probe(target, timeout, proxy_url=curl_proxy, runner=runner)
+    return "up" if is_http_ok(probe["http_code"]) else "down"
+
+
+# --------------------------------------------------------------------------
 # Full health check of a running connection
 # --------------------------------------------------------------------------
 
@@ -273,14 +401,18 @@ def _iface_exists(iface, runner):
 
 
 def check(name, target="", timeout=DEFAULT_TIMEOUT, rundir=RUNDIR, runner=subprocess.run,
-          pid_alive=_pid_alive, pf_reader=None):
-    """Probe one connection. Returns a result dict; does not write anything.
+          pid_alive=_pid_alive, pf_reader=None, resolver=socket.getaddrinfo):
+    """Probe one connection. Returns a result dict; does not write anything
+    (a pinned probe adds and removes one temporary host route).
 
-    Keys: ok, status, reason, mode, tun_path, http_code, curl_exit, curl_err,
-    latency_ms, target, via, message.
+    Keys: ok, status, reason, mode, tun_path, pinned, verified, pin_error,
+    http_code, curl_exit, curl_err, latency_ms, target, via, message.
+    ``verified`` is True only when the request certainly went through the
+    tunnel (tun_path ok, or route-pinned).
     """
     conf_file = os.path.join(rundir, f"{name}.conf")
     result = {"ok": False, "status": "down", "reason": "", "mode": "", "tun_path": TUN_UNKNOWN,
+              "pinned": "", "verified": False, "pin_error": "",
               "http_code": "", "curl_exit": "", "curl_err": "", "latency_ms": -1,
               "target": "", "via": ""}
     if not os.path.isfile(conf_file):
@@ -315,17 +447,28 @@ def check(name, target="", timeout=DEFAULT_TIMEOUT, rundir=RUNDIR, runner=subpro
     proxy_type = conf.get("PROXY_TYPE", "")
     curl_proxy = proxy_curl_url(proxy_type, conf.get("PROXY_URL", ""))
 
-    if tun_path == TUN_OK or not curl_proxy:
-        # Through the tunnel. For Shadowsocks curl cannot talk to the proxy,
-        # so this is the only probe available even when tun_path is not ok
-        # (tun_path then tells the reader the result is not trustworthy).
-        result["mode"] = "tun"
-        result["via"] = f"interface:{iface}"
+    probe = None
+    if tun_path == TUN_OK:
+        result.update(mode="tun", via=f"interface:{iface}", verified=True)
         probe = curl_probe(target, timeout, interface=iface, runner=runner)
     else:
-        result["mode"] = "proxy"
-        result["via"] = mask_url(curl_proxy)
-        probe = curl_probe(target, timeout, proxy_url=curl_proxy, runner=runner)
+        # A plain --interface probe would leave via WAN (nat_leak) or the
+        # default route (no_route_to): pin the target into the tunnel.
+        probe, pin_error = pinned_probe(target, timeout, iface, conf.get("TUN_PEER", ""),
+                                        runner=runner, resolver=resolver)
+        if probe is not None:
+            result.update(mode="tun", via=f"interface:{iface} pinned:{probe['pinned']}",
+                          verified=True, pinned=probe.pop("pinned"))
+        else:
+            result["pin_error"] = pin_error
+            if curl_proxy:
+                # Proxy reachability only; the tunnel itself is unverified.
+                result.update(mode="proxy", via=mask_url(curl_proxy))
+                probe = curl_probe(target, timeout, proxy_url=curl_proxy, runner=runner)
+            else:
+                # Shadowsocks: nothing else to try; result not trustworthy.
+                result.update(mode="tun", via=f"interface:{iface}")
+                probe = curl_probe(target, timeout, interface=iface, runner=runner)
 
     result.update(probe)
     if is_http_ok(probe["http_code"]):
@@ -356,6 +499,11 @@ def status_lines(result, now):
             lines.append(("curl_err", str(result["curl_err"]).replace("\n", " ")))
         lines.append(("mode", result["mode"]))
         lines.append(("tun_path", result["tun_path"]))
+        lines.append(("verified", "1" if result.get("verified") else "0"))
+        if result.get("pinned"):
+            lines.append(("pinned", result["pinned"]))
+        if result.get("pin_error"):
+            lines.append(("pin_error", str(result["pin_error"]).replace("\n", " ")))
     lines.append(("timestamp", str(int(now))))
     return lines
 
@@ -378,6 +526,9 @@ def log_message(result):
     if result["status"] == "error" or not result["mode"]:
         return "ERROR", result.get("message", result["reason"])
     tun_note = "" if result["tun_path"] == TUN_OK else f" tun_path={result['tun_path']}"
+    if not result.get("verified"):
+        tun_note += " UNVERIFIED (probe did not traverse the tunnel"
+        tun_note += f": {result['pin_error']})" if result.get("pin_error") else ")"
     if result["ok"]:
         return "INFO ", (f"Healthy — HTTP {result['http_code']}, {result['latency_ms']}ms "
                          f"(mode={result['mode']}{tun_note} {probe_detail(result)})")

@@ -102,7 +102,9 @@ def test_all_good(tmp_path):
 def test_process_and_interface_down(tmp_path):
     c, _ = checks(tmp_path, runner=Runner(ifaces={}), pid=False)
     assert c['China: tun2socks'] == {'name': 'China: tun2socks', 'ok': False, 'severity': 'medium',
-                                     'detail': 'not started (no pid file)'}
+                                     'detail': 'not started (no pid file)',
+                                     'fix': {'action': 'proxygateway restartconn China',
+                                             'title': 'Restart the China tunnel (tun2socks)'}}
     assert c['China: interface']['ok'] is False and 'does not exist' in c['China: interface']['detail']
     (tmp_path / 'b').mkdir()
     c, _ = checks(tmp_path / 'b', runner=Runner(ifaces={'pgw_China': 'pgw_China: flags=8002<BROADCAST,MULTICAST> mtu 1500\n'}))

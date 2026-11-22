@@ -28,6 +28,9 @@ class World:
         monkeypatch.setattr(watchdog, 'probe_primary', lambda conn: self.primary)
         monkeypatch.setattr(watchdog, 'switch_proxy', self._switch)
         monkeypatch.setattr(watchdog, 'force_down_gateway', self._force)
+        # the plugin's own gateway exists on pgw_China (force-down allowed)
+        monkeypatch.setattr(watchdog.pgwrepair, 'load_gateways', lambda: [
+            {'name': 'PROXYGW_CHINA', 'device': 'pgw_China', 'disabled': False}])
         self.dir = tmp_path
 
     def _probe_backup(self, conn):
@@ -187,4 +190,4 @@ def test_dry_run_health_check_writes_nothing(monkeypatch, tmp_path):
     def no_record(*a, **kw):
         raise AssertionError('record() called in dry-run')
     monkeypatch.setattr(watchdog.pgwhealth, 'record', no_record)
-    assert watchdog.run_healthcheck('China') is True
+    assert watchdog.run_healthcheck('China') is result

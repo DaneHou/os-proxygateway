@@ -4,13 +4,19 @@
 plugin_health.py — configctl proxygateway healthcheck
 
 Read-only health summary in the plugin health contract of os-netbaseline:
-{"checks": [{"name", "ok": true|false|null, "severity", "detail"}]}.
+{"checks": [{"name", "ok": true|false|null, "severity", "detail"[, "fix"]}]}.
+A failing check may carry "fix": {"action": "proxygateway <action> <conn>",
+"title": ...} — a safe, idempotent configd action that does not change
+config.xml (here: "restartconn NAME" for a dead tun2socks / missing
+interface).
 
 Per enabled connection:
   * tun2socks process alive (pid file)
   * TUN interface pgw_NAME exists and is UP/RUNNING
   * last connectivity probe of the watchdog (<name>.status; this script sends
-    no traffic itself) and the failover state (<name>.failover)
+    no traffic itself) — a probe that did not traverse the tunnel is reported
+    as unverified, not as success — the failover state (<name>.failover) and
+    the watchdog's tunnel repair state (<name>.repair)
   * the OPNsense gateway on pgw_NAME (gateway_health.php: core gateway list +
     dpinger status)
 
@@ -33,6 +39,13 @@ RUNDIR = "/var/run/proxygateway"
 IFCONFIG = "/sbin/ifconfig"
 GATEWAY_HEALTH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gateway_health.php")
 PROBE_STALE_S = 15 * 60          # the watchdog probes every minute
+REPAIR_WINDOW_S = 3600
+REPAIR_MAX_PER_HOUR = 3          # keep in sync with pgwrepair.REPAIR_MAX_PER_HOUR
+
+
+def restart_fix(name):
+    return {"action": f"proxygateway restartconn {name}",
+            "title": f"Restart the {name} tunnel (tun2socks)"}
 
 
 def _yes(v):
@@ -111,11 +124,14 @@ def connection_checks(name, health_enabled, rundir, flags, gws, now):
     checks = []
 
     alive = _pid_alive(rundir, name)
-    checks.append({
+    c = {
         "name": f"{name}: tun2socks",
         "ok": bool(alive),
         "detail": "running" if alive else ("not running (stale pid file)" if alive is False else "not started (no pid file)"),
-    })
+    }
+    if not alive:
+        c["fix"] = restart_fix(name)
+    checks.append(c)
 
     if flags is None:
         ok, detail = False, f"{iface} does not exist"
@@ -123,7 +139,10 @@ def connection_checks(name, health_enabled, rundir, flags, gws, now):
         ok, detail = True, f"{iface} up"
     else:
         ok, detail = False, f"{iface} exists but is not up/running"
-    checks.append({"name": f"{name}: interface", "ok": ok, "detail": detail})
+    c = {"name": f"{name}: interface", "ok": ok, "detail": detail}
+    if not ok:
+        c["fix"] = restart_fix(name)
+    checks.append(c)
 
     status = _kv(_read(os.path.join(rundir, f"{name}.status")))
     if not health_enabled:
@@ -139,12 +158,23 @@ def connection_checks(name, health_enabled, rundir, flags, gws, now):
             age = None
         st = status.get("status", "")
         mode = status.get("mode", "")
-        if st == "up":
+        tun_path = status.get("tun_path", "")
+        if "verified" in status:
+            verified = status["verified"] == "1"
+        else:   # status file of an older version
+            verified = mode != "proxy" and tun_path in ("", "ok")
+        if st == "up" and not verified:
+            ok, sev = False, "low"
+            detail = ("last watchdog probe did not traverse the tunnel (mode {}, tunnel path {}{}): "
+                      "proxy reachable, tunnel unverified").format(
+                mode or "?", tun_path or "?",
+                f", {status['pin_error']}" if status.get("pin_error") else "")
+        elif st == "up":
             ok, sev = True, "medium"
-            tun_path = status.get("tun_path", "")
             detail = "last watchdog probe ok ({} ms{}{})".format(
                 status.get("latency_ms", "?"), f", mode {mode}" if mode else "",
-                f", tunnel path {tun_path}" if tun_path and tun_path != "ok" else "")
+                ", pinned through the tunnel (outbound NAT covers the tunnel address)"
+                if status.get("pinned") else "")
         else:
             ok, sev = False, "medium"
             detail = "last watchdog probe {}{}".format(st or "failed",
@@ -166,6 +196,32 @@ def connection_checks(name, health_enabled, rundir, flags, gws, now):
         elif fo.get("active_proxy") == "backup":
             checks.append({"name": f"{name}: failover", "ok": False, "severity": "info",
                            "detail": "running on the backup proxy"})
+
+    rp_text = _read(os.path.join(rundir, f"{name}.repair"))
+    if rp_text:
+        try:
+            rp = json.loads(rp_text)
+        except ValueError:
+            rp = {}
+        rp = rp if isinstance(rp, dict) else {}
+        restarts = [t for t in rp.get("restarts") or [] if isinstance(t, (int, float)) and now - t < REPAIR_WINDOW_S]
+        last_at = rp.get("last_at") if isinstance(rp.get("last_at"), (int, float)) else 0
+        recent = now - last_at < REPAIR_WINDOW_S
+        action = str(rp.get("last_action", ""))[:40]
+        if len(restarts) >= REPAIR_MAX_PER_HOUR and rp.get("tunnel_failures"):
+            checks.append({"name": f"{name}: auto-repair", "ok": False, "severity": "medium",
+                           "detail": f"{len(restarts)} restarts in the last hour and the tunnel still fails; "
+                                     "watchdog repair capped"})
+        elif recent and rp.get("last_result") == "failed":
+            checks.append({"name": f"{name}: auto-repair", "ok": False, "severity": "medium",
+                           "detail": f"last watchdog repair ({action}) failed"})
+        elif recent and rp.get("last_result") == "upstream_down":
+            checks.append({"name": f"{name}: auto-repair", "ok": False, "severity": "medium",
+                           "detail": "proxy does not answer and cannot be restarted on this router"})
+        elif restarts:
+            checks.append({"name": f"{name}: auto-repair", "ok": True, "severity": "info",
+                           "detail": f"watchdog restarted the chain {len(restarts)}x in the last hour "
+                                     f"(last: {action})"})
 
     if gws is None:
         checks.append({"name": f"{name}: gateway", "ok": None, "severity": "low",

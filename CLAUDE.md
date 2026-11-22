@@ -48,7 +48,9 @@ src/
 │   │   ├── plugin_health.py            # configctl proxygateway healthcheck (read-only, os-netbaseline contract)
 │   │   ├── gateway_health.php          # gateway list + dpinger status for plugin_health.py
 │   │   ├── watchdog.py                  # Periodic monitoring: PID check, health check, failover
-│   │   ├── gateway_force_down.php       # Set gateway force_down via OPNsense Config API
+│   │   ├── gateway_force_down.php       # Set force_down on the plugin's own PROXYGW_ gateway (config.xml)
+│   │   ├── pgwrepair.py                 # Gateway resolution by device, repair state/cap, local proxy service, syslog
+│   │   ├── restartconn.sh               # configctl proxygateway restartconn NAME (healthcheck "fix" action)
 │   │   ├── speedtest.sh                # Run speed test through proxy
 │   │   ├── speedtest_cron.sh           # Cron wrapper for speed test
 │   │   ├── generate_desired.php         # desired.json generator used by rc.d at boot
@@ -78,10 +80,24 @@ src/
 - `watchdog.py` runs every 60s via cron, checks PID + health for each connection
 - Failover state stored in `/var/run/proxygateway/{name}.failover` (JSON)
 - On consecutive health failures ≥ threshold: switch to backup proxy or force-down gateway
+- Gateways are resolved by device `pgw_NAME` (pgwrepair.resolve_gateways), so user-made gateways on the
+  assigned interface (e.g. FRP_GW) are found. force_down is persistent (config.xml) and OPNsense has no
+  runtime override for monitor-disabled gateways → only the plugin's own `PROXYGW_<NAME>` is ever forced down
 - force_down is tracked in the .failover state and cleared automatically once healthy again
 - `gateway_force_down.php` modifies `config.xml` gateway `force_down` field
 - 5-minute cooldown after switch to prevent rapid flapping
 - Primary probe runs independently (curl directly to primary proxy, not through TUN)
+
+### Tunnel probe and repair (plugin 1.5+)
+- The health probe must traverse the TUN. Auto outbound NAT on WAN covers the tunnel address and pf NATs
+  before filtering, so `curl --interface pgw_X` alone leaks via WAN (`tun_path=nat_leak`). pgwhealth then
+  route-pins: temporary `route add -host <target ip> <peer>` for the one request (never replaces an
+  existing specific route). Unpinnable → proxy-direct fallback with `verified=0` (= unverified, not ok)
+- Repair (watchdog.check_repair): N failed *verified* tunnel probes → SOCKS step; proxy up/unknown →
+  restart tun2socks (restart_tunnel); proxy down and a known proxy daemon on this router → `service X
+  restart`. Backoff 2/4/8 min, cap 3/hour (pgwrepair). State: `<name>.repair`
+- Watchdog events that matter go to syslog via pgwrepair.event() at ≥ notice — the OPNsense catch-all
+  system log drops info-level lines from programs without their own log filter
 
 ### Versions
 - Plugin version: `PLUGIN_VERSION` in `Makefile` (CHANGELOG headings use it)

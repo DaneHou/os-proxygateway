@@ -10,6 +10,11 @@
  * then triggers route reconfiguration so the change takes effect immediately.
  *
  * Called via configd: configctl proxygateway forcedown <name> <up|down>
+ *
+ * Only the plugin's own PROXYGW_ gateway is edited. The watchdog resolves a
+ * connection's gateways by device (pgwrepair.resolve_gateways) and does not
+ * call this for user-made gateways on pgw_<name> (e.g. FRP_GW): force_down is
+ * persisted in config.xml, which the plugin must not do to foreign entries.
  */
 
 require_once 'config.inc';
