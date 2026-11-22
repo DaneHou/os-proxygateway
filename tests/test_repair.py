@@ -433,7 +433,7 @@ def health(tmp_path, ifaces=None, pid=True, status=None, repair=None):
 
 def test_fix_on_dead_tun2socks_and_missing_interface(tmp_path):
     c = health(tmp_path, ifaces={}, pid=False)
-    fix = {'action': 'proxygateway restartconn China', 'title': 'Restart the China tunnel (tun2socks)'}
+    fix = {'action': 'proxygateway restart_conn China', 'title': 'Restart the China tunnel (tun2socks)'}
     assert c['China: tun2socks']['fix'] == fix and c['China: interface']['fix'] == fix
     assert c['China: gateway']['detail'] == 'FRP_GW online'
 
