@@ -198,6 +198,25 @@ function proxygateway_rule_address($server)
  *    through the correct physical interface, not through its own TUN.
  * 2. Pass rules on pgw_* interfaces: Allows tunnel traffic in both directions.
  */
+/**
+ * Enabled upstream (WAN-type) interfaces: dynamic address (DHCP/PPP) or a gateway set;
+ * Proxy Gateway's own pgw_* interfaces are never upstream.
+ */
+function proxygateway_upstream_interfaces()
+{
+    $out = [];
+    foreach (legacy_config_get_interfaces(['virtual' => false]) as $id => $cfg) {
+        if (empty($cfg['enable']) || empty($cfg['if']) || strpos($cfg['if'], 'pgw_') === 0) {
+            continue;
+        }
+        $ipaddr = $cfg['ipaddr'] ?? '';
+        if (in_array($ipaddr, ['dhcp', 'pppoe', 'pptp', 'l2tp', 'ppp'], true) || !empty($cfg['gateway'])) {
+            $out[] = $id;
+        }
+    }
+    return $out;
+}
+
 function proxygateway_firewall(\OPNsense\Firewall\Plugin $fw)
 {
     if (!proxygateway_enabled()) {
@@ -273,6 +292,24 @@ function proxygateway_firewall(\OPNsense\Firewall\Plugin $fw)
                     'log'        => false,
                 ]
             );
+
+            // Never NAT the tunnel's own address out of an upstream (WAN) interface.
+            // Automatic outbound NAT covers every local network, the tunnel network
+            // included, and pf NAT is first-match: without this, traffic sourced from
+            // the tunnel address that follows the default route (e.g. a socket bound
+            // to pgw_NAME) would leave the WAN with the WAN address instead of using
+            // the tunnel's route-to rule.
+            foreach (proxygateway_upstream_interfaces() as $wan) {
+                $fw->registerSNatRule(50, [
+                    'interface'   => $wan,
+                    'nonat'       => true,
+                    'source'      => ['network' => $intf_id],
+                    'destination' => ['any' => true],
+                    'descr'       => "Proxy Gateway: never NAT {$name} tunnel address on {$wan}",
+                    'log'         => false,
+                    '#ref'        => "pgw_{$name}_nonat_{$wan}",
+                ]);
+            }
 
             // Outbound NAT: allow policy-routed LAN/VPN traffic to exit via this tunnel
             if (!empty((string)$conn->outboundNat)) {

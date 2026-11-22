@@ -73,3 +73,12 @@ def test_speedtest_caps_download_and_requires_2xx():
     assert '--range "0-$((MAX_BYTES - 1))"' in s
     assert '[ "$HTTP_CODE" = "206" ]' in s
     assert '"$HTTP_CODE" != "000" ]; then' not in s
+
+
+def test_tunnel_address_is_never_natted_on_upstream_interfaces():
+    inc = read(INC)
+    # a no-nat rule from the tunnel network on every upstream interface, ahead of the
+    # plugin NAT rules (prio 100) and of automatic outbound NAT
+    assert "registerSNatRule(50" in inc and "\x27nonat\x27       => true" in inc
+    assert "\x27source\x27      => [\x27network\x27 => $intf_id]" in inc
+    assert "function proxygateway_upstream_interfaces()" in inc and "pgw_" in inc
