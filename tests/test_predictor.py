@@ -82,3 +82,11 @@ def test_any_source_leaks():
 def test_unreadable_rules_unknown():
     assert predict_tun_path(IFACE, LOCAL, '', '') == 'unknown'
     assert predict_tun_path(IFACE, '', NAT, FILTER) == 'unknown'
+
+
+def test_anchors_and_carp_are_not_nat_rules():
+    # live 1.6.0 ruleset: miniupnpd nat-anchor and "no nat proto carp" come before the plugin rule
+    nat = ('nat-anchor "miniupnpd" all\nno nat proto carp all\n'
+           'no nat on igc0 from (pgw_China:network) to any\n' + NAT)
+    assert predict_tun_path(IFACE, LOCAL, nat, FILTER) == 'ok'
+    assert predict_tun_path(IFACE, LOCAL, 'nat-anchor "miniupnpd" all\n' + NAT, FILTER) == 'nat_leak'

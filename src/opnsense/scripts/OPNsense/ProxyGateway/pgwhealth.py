@@ -59,7 +59,7 @@ TUN_NAT_LEAK = "nat_leak"
 TUN_NO_ROUTE_TO = "no_route_to"
 TUN_UNKNOWN = "unknown"
 
-_NAT_RE = re.compile(r"^(no\s+)?nat\b(.*)$")
+_NAT_RE = re.compile(r"^(no\s+)?nat\s(.*)$")  # not nat-anchor
 _PROTO_RE = re.compile(r"\bproto\s+(\{[^}]*\}|\S+)")
 
 
