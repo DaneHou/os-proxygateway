@@ -23,12 +23,20 @@ fi
 # Route-to integrity check: if approuter rules exist but none have
 # route-to for pgw_* gateways, a filter reload during gateway bounce
 # dropped the routing directives. Trigger reload to restore them.
+# Core also leaves route-to out on purpose while the rules' gateway is down;
+# a reload cannot fix that and would only reload the whole firewall (with a
+# short DNS hiccup for every client) once a minute for the whole outage.
+# So retry at most once per 15 minutes.
 APPROUTER_RULES=$(/sbin/pfctl -sr 2>/dev/null | grep -c "approuter_")
 APPROUTER_ROUTETO=$(/sbin/pfctl -sr 2>/dev/null | grep "approuter_" | grep -c "route-to")
+ROUTETO_STAMP="${RUNDIR}/routeto_reload.stamp"
 
 if [ "${APPROUTER_RULES:-0}" -gt 0 ] && [ "${APPROUTER_ROUTETO:-0}" -eq 0 ]; then
-    echo "$(date '+%Y-%m-%d %H:%M:%S') route-to missing from approuter rules, reloading filter" >> "$WATCHDOG_LOG"
-    /usr/local/sbin/configctl filter reload >> "$WATCHDOG_LOG" 2>&1
+    if [ -z "$(find "$ROUTETO_STAMP" -mmin -15 2>/dev/null)" ]; then
+        touch "$ROUTETO_STAMP"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') route-to missing from approuter rules, reloading filter" >> "$WATCHDOG_LOG"
+        /usr/local/sbin/configctl filter reload >> "$WATCHDOG_LOG" 2>&1
+    fi
 fi
 
 # Always run watchdog.py: besides restarting dead processes it runs the

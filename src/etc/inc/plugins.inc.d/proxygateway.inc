@@ -641,6 +641,46 @@ function proxygateway_sync_interfaces()
 }
 
 /**
+ * Older versions wrote PROXYGW_<NAME> into the legacy <gateways> section,
+ * which this plugin no longer manages. When the connection is gone such an
+ * entry stays behind and points at whatever interface later takes over its
+ * optN key (seen: a stale PROXYGW_ gateway on the Tailscale interface).
+ * Remove it, unless a connection of that name is still enabled or anything
+ * else in the configuration refers to the gateway by name.
+ */
+function proxygateway_remove_legacy_gateways($mdl, $xml, &$changed)
+{
+    if (!isset($xml->gateways)) {
+        return;
+    }
+    $live = [];
+    foreach ($mdl->connections->connection->iterateItems() as $conn) {
+        if (!empty((string)$conn->enabled)) {
+            $live['PROXYGW_' . strtoupper((string)$conn->name)] = true;
+        }
+    }
+    $all = $xml->asXML();
+    $toRemove = [];
+    foreach ($xml->gateways->children() as $gw) {
+        $name = (string)$gw->name;
+        if ($gw->getName() !== 'gateway_item' || strpos($name, 'PROXYGW_') !== 0 || isset($live[$name])) {
+            continue;
+        }
+        if (substr_count($all, '>' . $name . '<') > 1) {
+            syslog(LOG_NOTICE, "proxygateway: keeping legacy gateway {$name}, still referenced");
+            continue;
+        }
+        $toRemove[] = $gw;
+    }
+    foreach ($toRemove as $gw) {
+        syslog(LOG_NOTICE, 'proxygateway: removed stale legacy gateway ' . (string)$gw->name);
+        $dom = dom_import_simplexml($gw);
+        $dom->parentNode->removeChild($dom);
+        $changed = true;
+    }
+}
+
+/**
  * Sync gateway entries in config.xml for proxy gateway connections.
  *
  * Creates/updates <gateway_item> entries named PROXYGW_{NAME} under the
@@ -651,6 +691,8 @@ function proxygateway_sync_interfaces()
  */
 function proxygateway_sync_gateways($mdl, $xml, &$changed)
 {
+    proxygateway_remove_legacy_gateways($mdl, $xml, $changed);
+
     if (!isset($xml->interfaces) || !isset($xml->Gateways)) {
         return;
     }
