@@ -27,8 +27,10 @@ fi
 # a reload cannot fix that and would only reload the whole firewall (with a
 # short DNS hiccup for every client) once a minute for the whole outage.
 # So retry at most once per 15 minutes.
-APPROUTER_RULES=$(/sbin/pfctl -sr 2>/dev/null | grep -c "approuter_")
-APPROUTER_ROUTETO=$(/sbin/pfctl -sr 2>/dev/null | grep "approuter_" | grep -c "route-to")
+# (pass rules only: App Router also loads a block rule behind each route, which
+# is what catches the traffic while the gateway is gone)
+APPROUTER_RULES=$(/sbin/pfctl -sr 2>/dev/null | grep "^pass" | grep -c "approuter_")
+APPROUTER_ROUTETO=$(/sbin/pfctl -sr 2>/dev/null | grep "^pass" | grep "approuter_" | grep -c "route-to")
 ROUTETO_STAMP="${RUNDIR}/routeto_reload.stamp"
 
 if [ "${APPROUTER_RULES:-0}" -gt 0 ] && [ "${APPROUTER_ROUTETO:-0}" -eq 0 ]; then
