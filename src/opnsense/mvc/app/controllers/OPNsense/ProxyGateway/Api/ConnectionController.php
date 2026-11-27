@@ -22,6 +22,8 @@ namespace OPNsense\ProxyGateway\Api;
 
 use OPNsense\Base\ApiMutableModelControllerBase;
 
+require_once '/usr/local/etc/inc/plugins.inc.d/proxygateway.inc';
+
 /**
  * API controller for managing proxy gateway connections.
  *
@@ -113,7 +115,9 @@ class ConnectionController extends ApiMutableModelControllerBase
      */
     public function delItemAction($uuid)
     {
-        return $this->delBase('connections.connection', $uuid);
+        $name = $this->connectionName($uuid);
+        $result = $this->delBase('connections.connection', $uuid);
+        return $this->withReferenceWarning($result, $name, 'deleted');
     }
 
     /**
@@ -124,6 +128,43 @@ class ConnectionController extends ApiMutableModelControllerBase
      */
     public function toggleItemAction($uuid, $enabled = null)
     {
-        return $this->toggleBase('connections.connection', $uuid, $enabled);
+        $name = $this->connectionName($uuid);
+        $result = $this->toggleBase('connections.connection', $uuid, $enabled);
+        if (($result['result'] ?? '') === 'Disabled') {
+            $result = $this->withReferenceWarning($result, $name, 'disabled');
+        }
+        return $result;
+    }
+
+    /**
+     * @param string $uuid connection uuid
+     * @return string|null connection name
+     */
+    private function connectionName($uuid)
+    {
+        $node = $this->getModel()->getNodeByReference('connections.connection.' . $uuid);
+        return $node !== null ? (string)$node->name : null;
+    }
+
+    /**
+     * Tell the caller when the connection's interface is still used elsewhere
+     * (it stays assigned but disabled after Apply, see proxygateway_sync_interfaces()).
+     */
+    private function withReferenceWarning(array $result, $name, $what)
+    {
+        if (empty($name)) {
+            return $result;
+        }
+        [$ifkey, $refs] = proxygateway_connection_references($name);
+        if ($ifkey !== null && !empty($refs)) {
+            $result['warning'] = sprintf(
+                gettext('Connection %s %s: its interface %s is still used by %s. After Apply it stays assigned but disabled, and nothing can leave through it.'),
+                $name,
+                $what === 'deleted' ? gettext('deleted') : gettext('disabled'),
+                $ifkey,
+                implode('; ', $refs)
+            );
+        }
+        return $result;
     }
 }

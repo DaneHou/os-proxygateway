@@ -216,8 +216,10 @@ def connection_checks(name, health_enabled, rundir, flags, gws, now):
             checks.append({"name": f"{name}: auto-repair", "ok": False, "severity": "medium",
                            "detail": f"last watchdog repair ({action}) failed"})
         elif recent and rp.get("last_result") == "upstream_down":
+            why = str(rp.get("last_reason") or "")[:160]
             checks.append({"name": f"{name}: auto-repair", "ok": False, "severity": "medium",
-                           "detail": "proxy does not answer and cannot be restarted on this router"})
+                           "detail": "the proxy itself does not answer" + (f" ({why})" if why else "")
+                                     + "; it is not managed by Proxy Gateway, so check the proxy service"})
         elif restarts:
             checks.append({"name": f"{name}: auto-repair", "ok": True, "severity": "info",
                            "detail": f"watchdog restarted the chain {len(restarts)}x in the last hour "

@@ -76,7 +76,8 @@
                 if (data && data.response) {
                     var escaped = $('<div/>').text(data.response).html();
                     var hasError = data.response.toLowerCase().indexOf('error') >= 0 ||
-                                   data.response.toLowerCase().indexOf('fail') >= 0;
+                                   data.response.toLowerCase().indexOf('fail') >= 0 ||
+                                   data.response.indexOf('WARNING:') >= 0;
                     BootstrapDialog.show({
                         title: hasError ? '{{ lang._("Reconfigure Errors") }}' : '{{ lang._("Reconfigure Result") }}',
                         message: '<pre style="max-height:400px;overflow:auto;">' + escaped + '</pre>',

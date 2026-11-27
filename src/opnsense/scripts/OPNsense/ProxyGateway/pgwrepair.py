@@ -7,9 +7,10 @@ pgwrepair.py — Helpers for the watchdog's tunnel repair and gateway handling.
   gateways are owned by the plugin.
 * Repair state (<name>.repair, JSON): consecutive failed tunnel probes,
   timestamps of recent restarts, backoff deadline, last action/result.
-* Local proxy service detection: when the connection's proxy listens on this
-  router (e.g. shadowsocks-rust sslocal on :1080), find its rc.d service so a
-  failing SOCKS step can be repaired by restarting it.
+* Upstream description: when the proxy itself does not answer (SOCKS step),
+  say what is (or is not) listening there. The proxy is not Proxy Gateway's
+  (e.g. shadowsocks-rust sslocal on :1080 belongs to its own package), so the
+  watchdog reports it and never restarts it.
 * event(): log a watchdog step to the watchdog log *and* syslog. Syslog
   priority is at least NOTICE because OPNsense's catch-all system log
   (/var/log/system/) only keeps notice..emerg for programs without their own
@@ -19,7 +20,6 @@ pgwrepair.py — Helpers for the watchdog's tunnel repair and gateway handling.
 import json
 import logging
 import os
-import re
 import socket
 import subprocess
 
@@ -30,22 +30,12 @@ except ImportError:  # pragma: no cover - not on FreeBSD/Linux
 
 RUNDIR = "/var/run/proxygateway"
 GATEWAY_HEALTH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gateway_health.php")
-RC_DIRS = ("/usr/local/etc/rc.d",)
 SOCKSTAT = "/usr/bin/sockstat"
 PS = "/bin/ps"
-SERVICE = "/usr/sbin/service"
 
 REPAIR_MAX_PER_HOUR = 3          # cap: restarts per connection per rolling hour
 REPAIR_WINDOW = 3600
 REPAIR_BACKOFF_BASE = 120        # wait after the k-th restart in the window: 120 * 2^(k-1) s
-
-# Proxy daemons the watchdog may restart automatically when their SOCKS/HTTP
-# step fails. Anything else listening on the proxy port is left alone.
-RESTARTABLE_PROXIES = frozenset({
-    "sslocal", "ss-local", "v2ray", "xray", "sing-box", "gost", "3proxy", "sockd", "danted",
-    "microsocks", "trojan", "trojan-go", "hysteria", "clash", "mihomo", "naive", "tinyproxy",
-    "privoxy",
-})
 
 log = logging.getLogger("watchdog")
 
@@ -211,51 +201,13 @@ def process_binary(pid, runner=subprocess.run):
     return parts[0] if parts else ""
 
 
-def rc_service_for(binary, rc_dirs=RC_DIRS):
-    """rc.d script name whose procname/command is ``binary`` ('' if none)."""
-    if not binary.startswith("/"):
-        return ""
-    pat = re.compile(r'^\s*(procname|command)=["\']?' + re.escape(binary) + r'["\']?\s*$', re.M)
-    for d in rc_dirs:
-        try:
-            names = sorted(os.listdir(d))
-        except OSError:
-            continue
-        for fn in names:
-            if not re.fullmatch(r"[A-Za-z0-9_.-]+", fn):
-                continue
-            try:
-                with open(os.path.join(d, fn)) as f:
-                    text = f.read(65536)
-            except OSError:
-                continue
-            if pat.search(text):
-                return fn
-    return ""
-
-
-def local_proxy_service(addr, port, runner=subprocess.run, rc_dirs=RC_DIRS, is_local=is_local_address):
-    """-> (service, detail). service is '' when nothing may be restarted."""
+def upstream_detail(addr, port, runner=subprocess.run, is_local=is_local_address):
+    """What sits behind a proxy address that does not answer, for the log and healthcheck."""
     if not is_local(addr):
-        return "", f"proxy {addr or '?'} is not on this router"
+        return f"proxy {addr or '?'}:{port} is not on this router"
     pid, comm = listener_pid(addr, port, runner)
     if pid is None:
-        return "", f"nothing listens on port {port}"
+        return f"nothing listens on port {port} of this router"
     binary = process_binary(pid, runner)
     base = os.path.basename(binary) if binary else comm
-    if base not in RESTARTABLE_PROXIES:
-        return "", f"listener {base or comm} is not a known proxy daemon"
-    svc = rc_service_for(binary, rc_dirs)
-    if not svc:
-        return "", f"no rc.d service found for {binary}"
-    return svc, f"{base} (pid {pid})"
-
-
-def restart_service(svc, runner=subprocess.run):
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+", svc or ""):
-        return False
-    try:
-        res = runner([SERVICE, svc, "restart"], capture_output=True, text=True, timeout=60)
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return res.returncode == 0
+    return f"{base or comm} (pid {pid}) listens on port {port} but does not answer"

@@ -101,3 +101,39 @@ def test_cron_jobs_come_from_the_plugin_hook():
     ctrl = read(os.path.join(SRC, 'opnsense', 'mvc', 'app', 'controllers', 'OPNsense',
                              'ProxyGateway', 'Api', 'ServiceController.php'))
     assert "proxygateway_cron_stale($mdl)" in ctrl and "configdRun('cron restart')" in ctrl
+
+
+def test_watchdog_leaves_app_router_alone():
+    """App Router's rules are App Router's job (its healthcheck checks them)."""
+    sh = read(os.path.join(SCRIPTS, 'watchdog.sh'))
+    assert 'approuter_' not in sh and 'filter reload' not in sh and 'pfctl' not in sh
+
+
+def test_disabled_connection_keeps_its_interface_assignment():
+    """Re-enabling must reuse the same optN: rules and FRP_GW-style dynamic gateways point at it."""
+    inc = read(INC)
+    body = inc[inc.index('function proxygateway_sync_interfaces()'):inc.index('function proxygateway_interface_references(')]
+    assert "unset($iface->enable);" in body
+    assert "!isset($knownPgw[$ifDev]) && empty($refs)" in body      # only deleted + unused is removed
+    assert 'return $warnings;' in body
+
+
+def test_uninstall_reports_leftovers_without_editing_config():
+    mk = read(os.path.join(ROOT, 'Makefile'))
+    assert 'leftovers.php' in mk.split('uninstall:', 1)[1].split('\n\n', 1)[0]
+    deinst = read(os.path.join(ROOT, 'pkg', '+POST_DEINSTALL'))
+    assert 'simplexml_load_file' in deinst and 'config.xml' in deinst
+    for text in (read(os.path.join(SCRIPTS, 'leftovers.php')), deinst):
+        assert '->save(' not in text and 'file_put_contents' not in text
+
+
+def test_php_references():
+    import shutil
+    import subprocess
+    import pytest
+    php = shutil.which('php')
+    if not php:
+        pytest.skip('no php')
+    proc = subprocess.run([php, '-d', 'log_errors=0', os.path.join(ROOT, 'tests', 'php', 'test_references.php')],
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr

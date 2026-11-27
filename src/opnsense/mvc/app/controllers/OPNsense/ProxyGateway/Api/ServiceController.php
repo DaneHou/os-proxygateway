@@ -70,7 +70,7 @@ class ServiceController extends ApiMutableServiceControllerBase
             // Auto-assign interfaces, sync IPs, and create gateways in config.xml.
             // This also auto-assigns pgw_* interfaces that the user hasn't
             // manually assigned, eliminating the Interfaces > Assignments step.
-            proxygateway_sync_interfaces();
+            $warnings = proxygateway_sync_interfaces();
 
             // Re-register so OPNsense picks up newly auto-assigned interfaces
             $backend->configdRun('interface invoke registration');
@@ -84,7 +84,10 @@ class ServiceController extends ApiMutableServiceControllerBase
                 $backend->configdRun('cron restart');
             }
 
-            $result = ['status' => 'ok', 'response' => $response];
+            foreach ($warnings as $w) {
+                $response .= ($response !== '' ? "\n" : '') . "WARNING: {$w}";
+            }
+            $result = ['status' => 'ok', 'response' => $response, 'warnings' => $warnings];
         }
 
         return $result;

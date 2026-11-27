@@ -3,6 +3,17 @@
 Plugin versions (Makefile `PLUGIN_VERSION`) are listed here. The MVC model
 schema has its own version (`ProxyGateway.xml`), noted where it changed.
 
+## [1.8.0] - 2026-11-26
+
+Each plugin looks after its own things only.
+
+### Changed
+
+- **The watchdog no longer checks App Router's rules.** The route-to check in `watchdog.sh` (and the filter reload it could trigger) is gone; App Router's healthcheck reports its own rules.
+- **The upstream proxy is reported, not restarted.** When the tunnel fails and the proxy itself does not answer (SOCKS step), the watchdog used to run `service <proxy> restart` for a known proxy daemon such as sslocal. That service belongs to its own package: the watchdog now logs what is listening there, sets `upstream_down` and the healthcheck says to check the proxy service. tun2socks is still restarted when the proxy answers.
+- **Disabling a connection keeps its interface assignment** (disabled) instead of removing it. Enabling it again reuses the same `optN`, so firewall rules, gateways and the interface's dynamic gateway (e.g. `FRP_GW`, named after the interface description) keep working. A deleted connection's assignment is removed only when nothing in config.xml uses it; otherwise it stays disabled and Apply shows a warning listing what uses it. Disabling or deleting a connection through the API returns the same warning.
+- **Uninstall lists leftovers** (pgw_* assignments, `PROXYGW_` gateways) instead of leaving them silently. It does not edit config.xml, because rules may still use them.
+
 ## [1.7.0] - 2026-11-26
 
 ### Changed

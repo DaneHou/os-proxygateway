@@ -52,9 +52,8 @@ class World:
     def __init__(self, monkeypatch, tmp_path):
         self.dir = tmp_path
         self.socks = 'up'
-        self.service = ('sslocal-rust', 'sslocal (pid 76031)')
+        self.upstream = 'sslocal (pid 76031) listens on port 1080 but does not answer'
         self.tunnel_restarts = []
-        self.service_restarts = []
         self.forced = []
         self.syslog = FakeSyslog()
         monkeypatch.setattr(watchdog, 'RUNDIR', str(tmp_path))
@@ -64,8 +63,9 @@ class World:
         monkeypatch.setattr(watchdog, 'restart_tunnel', self._restart_tunnel)
         monkeypatch.setattr(watchdog, 'force_down_gateway', lambda n, d: self.forced.append(d) or True)
         monkeypatch.setattr(watchdog.pgwhealth, 'socks_step', lambda conf: self.socks)
-        monkeypatch.setattr(pgwrepair, 'local_proxy_service', lambda addr, port: self.service)
-        monkeypatch.setattr(pgwrepair, 'restart_service', self._restart_service)
+        monkeypatch.setattr(pgwrepair, 'upstream_detail', lambda addr, port: self.upstream)
+        # nothing may ever be restarted by name: the proxy is not Proxy Gateway's
+        monkeypatch.setattr(watchdog.subprocess, 'run', self._no_run)
         monkeypatch.setattr(pgwrepair, 'load_gateways', lambda: GWS)
         monkeypatch.setattr(pgwrepair, 'syslog', self.syslog)
         monkeypatch.setattr(pgwrepair, '_SYSLOG_PRIO', {10: 5, 20: 5, 30: 4, 40: 3})
@@ -74,9 +74,8 @@ class World:
         self.tunnel_restarts.append(to_backup)
         return True
 
-    def _restart_service(self, svc):
-        self.service_restarts.append(svc)
-        return True
+    def _no_run(self, argv, *a, **kw):
+        raise AssertionError(f"unexpected command: {argv}")
 
     def tick(self, result, now, conn=CONN, failover=None):
         return watchdog.check_repair('China', conn, result, failover, now=now, rundir=str(self.dir))
@@ -142,7 +141,7 @@ def test_n_failures_then_tun2socks_restart_with_backoff_and_cap(world):
     world.tick(TUN_FAIL, t + 60)
     assert world.tunnel_restarts == []
     world.tick(TUN_FAIL, t + 120)                         # 3rd: repair
-    assert world.tunnel_restarts == [False] and world.service_restarts == []
+    assert world.tunnel_restarts == [False]
     s = world.state()
     assert s['restarts'] == [t + 120] and s['next_allowed'] == t + 120 + 120
     assert s['last_action'] == 'tun2socks' and s['last_result'] == 'ok' and s['tunnel_failures'] == 0
@@ -165,21 +164,26 @@ def test_n_failures_then_tun2socks_restart_with_backoff_and_cap(world):
     assert len(world.tunnel_restarts) == 4
 
 
-def test_socks_step_failing_restarts_local_proxy_service(world):
+def test_socks_step_failing_reports_and_never_restarts_the_proxy(world):
+    """The proxy (e.g. sslocal) belongs to its own package: report it, don't restart it."""
     world.socks = 'down'
-    for i in range(3):
-        world.tick(TUN_FAIL, 1000 + 60 * i)
-    assert world.tunnel_restarts == [] and world.service_restarts == ['sslocal-rust']
-    assert world.state()['last_action'] == 'service:sslocal-rust'
-
-
-def test_socks_step_failing_nothing_local_waits_without_using_cap(world):
-    world.socks = 'down'
-    world.service = ('', 'proxy 203.0.113.9 is not on this router')
     for i in range(3):
         world.tick(TUN_FAIL, 1000 + 60 * i)
     s = world.state()
-    assert world.tunnel_restarts == [] and world.service_restarts == []
+    assert world.tunnel_restarts == []
+    assert s['restarts'] == [] and s['last_action'] == 'none' and s['last_result'] == 'upstream_down'
+    assert s['next_allowed'] == 1120 + 120 and 'sslocal (pid 76031)' in s['last_reason']
+    msgs = [m for _, m in world.syslog.lines]
+    assert any('not managed by Proxy Gateway' in m and 'sslocal' in m for m in msgs)
+
+
+def test_socks_step_failing_remote_proxy_waits_without_using_cap(world):
+    world.socks = 'down'
+    world.upstream = 'proxy 203.0.113.9:1080 is not on this router'
+    for i in range(3):
+        world.tick(TUN_FAIL, 1000 + 60 * i)
+    s = world.state()
+    assert world.tunnel_restarts == []
     assert s['restarts'] == [] and s['last_result'] == 'upstream_down' and s['next_allowed'] == 1120 + 120
 
 
@@ -299,43 +303,22 @@ def fake_runner(sockstat=SOCKSTAT, binary='/usr/local/bin/sslocal -c /usr/local/
     return run
 
 
-@pytest.fixture
-def rcdir(tmp_path):
-    d = tmp_path / 'rc.d'
-    d.mkdir()
-    (d / 'sslocal-rust').write_text('name="sslocal_rust"\nprocname=/usr/local/bin/sslocal\n'
-                                    'command="/usr/sbin/daemon"\n')
-    (d / 'openssh').write_text('name="openssh"\ncommand="/usr/local/sbin/sshd"\n')
-    return str(d)
+def test_upstream_detail():
+    ud = pgwrepair.upstream_detail
+    assert ud('203.0.113.9', '1080', fake_runner(), is_local=lambda a: False) == \
+        'proxy 203.0.113.9:1080 is not on this router'
+    assert ud('192.168.70.1', '1080', fake_runner(sockstat=''), is_local=lambda a: True) == \
+        'nothing listens on port 1080 of this router'
+    assert ud('192.168.70.1', '1080', fake_runner(), is_local=lambda a: True) == \
+        'sslocal (pid 76031) listens on port 1080 but does not answer'
 
 
-def test_local_proxy_service_found(rcdir):
-    svc, detail = pgwrepair.local_proxy_service('192.168.70.1', '1080', fake_runner(), (rcdir,),
-                                                is_local=lambda a: True)
-    assert svc == 'sslocal-rust' and 'sslocal' in detail
-
-
-def test_local_proxy_service_refusals(rcdir):
-    lp = pgwrepair.local_proxy_service
-    assert lp('203.0.113.9', '1080', fake_runner(), (rcdir,), is_local=lambda a: False)[0] == ''
-    assert lp('192.168.70.1', '1080', fake_runner(sockstat=''), (rcdir,), is_local=lambda a: True)[0] == ''
-    # sshd -D on the port: not a proxy daemon we may restart
-    ss = SOCKSTAT.replace('sslocal', 'sshd   ')
-    assert lp('192.168.70.1', '1080', fake_runner(sockstat=ss, binary='/usr/local/sbin/sshd'), (rcdir,),
-              is_local=lambda a: True)[0] == ''
-    # listener on another address
-    ss = SOCKSTAT.replace('*:1080', '127.0.0.1:1080')
-    assert lp('192.168.70.1', '1080', fake_runner(sockstat=ss), (rcdir,), is_local=lambda a: True)[0] == ''
-    # no rc script
-    assert lp('192.168.70.1', '1080', fake_runner(), (rcdir + '/none',), is_local=lambda a: True)[0] == ''
-
-
-def test_restart_service_validates_name():
-    seen = []
-    run = lambda argv, **kw: seen.append(argv) or types.SimpleNamespace(returncode=0)
-    assert pgwrepair.restart_service('sslocal-rust', run)
-    assert seen == [[pgwrepair.SERVICE, 'sslocal-rust', 'restart']]
-    assert not pgwrepair.restart_service('x; reboot', run) and len(seen) == 1
+def test_no_service_restart_code_left():
+    """Proxy Gateway must not restart other packages' services."""
+    for f in ('watchdog.py', 'pgwrepair.py'):
+        with open(os.path.join(SCRIPTS, f)) as fh:
+            text = fh.read()
+        assert '/usr/sbin/service' not in text and 'restart_service' not in text
 
 
 def test_is_local_address():

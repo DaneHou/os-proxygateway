@@ -1,5 +1,5 @@
 PLUGIN_NAME=	os-proxygateway
-PLUGIN_VERSION=	1.7.0
+PLUGIN_VERSION=	1.8.0
 PLUGIN_ARCH?=	freebsd-amd64
 
 TUN2SOCKS_VERSION=	2.6.0
@@ -172,6 +172,7 @@ activate:
 	@echo ">>> Debug hooks: pluginctl (list all plugin hooks)"
 
 uninstall:
+	@php -d log_errors=0 $(SCRIPTS_DIR)/leftovers.php 2>/dev/null || true
 	@echo ">>> Stopping service..."
 	@$(PREFIX)/etc/rc.d/opnsense-proxygateway stop 2>/dev/null || true
 	@echo ">>> Removing plugin files..."

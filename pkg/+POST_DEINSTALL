@@ -24,4 +24,29 @@ sysrc -x proxygateway_enable 2>/dev/null || true
 rm -f /etc/cron.d/proxygateway
 /usr/local/sbin/configctl cron restart 2>/dev/null || true
 
+# config.xml is left alone (rules may still use the interface or gateway):
+# say what remains. Inline, because the plugin's files are already gone.
+/usr/local/bin/php -d log_errors=0 <<'PHP' 2>/dev/null || true
+<?php
+$xml = @simplexml_load_file('/conf/config.xml');
+if ($xml === false) { exit(0); }
+$left = [];
+foreach ($xml->interfaces->children() as $key => $iface) {
+    if (strpos((string)$iface->{'if'}, 'pgw_') === 0) {
+        $left[] = "interface {$key} (" . (string)$iface->{'if'} . ") -> Interfaces > Assignments";
+    }
+}
+foreach ([$xml->gateways ?? null, $xml->OPNsense->Gateways ?? null] as $section) {
+    if ($section === null) { continue; }
+    foreach ($section->children() as $gw) {
+        if (strpos((string)$gw->name, 'PROXYGW_') === 0) {
+            $left[] = "gateway " . (string)$gw->name . " -> System > Gateways > Configuration";
+        }
+    }
+}
+if ($left) {
+    echo "Note: these remain in config.xml (rules may still use them):\n  - " . implode("\n  - ", $left) . "\n";
+}
+PHP
+
 echo "os-proxygateway has been removed."

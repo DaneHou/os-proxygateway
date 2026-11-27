@@ -536,11 +536,16 @@ function proxygateway_next_opt_key($xml)
  *    (finds next available optN key, sets IP/subnet/enable)
  * 2. Syncs IP address and subnet for already-assigned interfaces
  *
- * Removes pgw_* assignments for connections that have been disabled or
- * deleted from the model — keeping stale interfaces and gateways around
- * for disabled connections clutters the routing table and UI.
+ * A disabled connection keeps its assignment, disabled: enabling it again
+ * then reuses the same optN key, so firewall rules, gateways and the
+ * interface's dynamic gateway (e.g. FRP_GW, named after its description)
+ * that refer to it keep working. The assignment of a deleted connection is
+ * removed unless something in config.xml still uses it; then it is kept,
+ * disabled, and reported.
  *
  * Finally, syncs gateway entries via proxygateway_sync_gateways().
+ *
+ * @return array warnings for the Apply dialog (also sent to syslog)
  */
 function proxygateway_sync_interfaces()
 {
@@ -548,11 +553,12 @@ function proxygateway_sync_interfaces()
     $xml = $configObj->object();
 
     if (!isset($xml->interfaces)) {
-        return;
+        return [];
     }
 
     $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
     $changed = false;
+    $warnings = [];
 
     // Collect enabled pgw_* device names — only these should have
     // interface assignments and gateways in config.xml.
@@ -591,12 +597,14 @@ function proxygateway_sync_interfaces()
                     } else {
                         $iface->addChild('subnet', '32');
                     }
-                    if (empty((string)$iface->enable)) {
-                        if (isset($iface->enable)) {
-                            $iface->enable = '1';
-                        } else {
-                            $iface->addChild('enable', '1');
-                        }
+                    $changed = true;
+                }
+                // re-enabled connection: its kept (disabled) assignment comes back
+                if (empty((string)$iface->enable)) {
+                    if (isset($iface->enable)) {
+                        $iface->enable = '1';
+                    } else {
+                        $iface->addChild('enable', '1');
                     }
                     $changed = true;
                 }
@@ -617,14 +625,35 @@ function proxygateway_sync_interfaces()
         }
     }
 
-    // Remove pgw_* interface assignments that are not enabled.
-    // This covers both disabled and deleted connections — no reason to
-    // keep a stale interface around when the tunnel is not running.
+    // Connections that exist in the model (enabled or not), by device name.
+    $knownPgw = [];
+    foreach ($mdl->connections->connection->iterateItems() as $uuid => $conn) {
+        $knownPgw["pgw_" . (string)$conn->name] = (string)$conn->name;
+    }
+
+    // Not enabled: keep the assignment disabled (never renumber). Only the
+    // assignment of a deleted connection that nothing refers to is removed.
     $toRemove = [];
     foreach ($xml->interfaces->children() as $ifkey => $iface) {
         $ifDev = (string)$iface->{'if'};
-        if (strpos($ifDev, 'pgw_') === 0 && !isset($enabledPgw[$ifDev])) {
+        if (strpos($ifDev, 'pgw_') !== 0 || isset($enabledPgw[$ifDev])) {
+            continue;
+        }
+        $refs = proxygateway_interface_references($xml, $ifkey);
+        if (!isset($knownPgw[$ifDev]) && empty($refs)) {
             $toRemove[] = $iface;
+            continue;
+        }
+        if (!empty((string)$iface->enable)) {
+            unset($iface->enable);
+            $changed = true;
+        }
+        if (!empty($refs)) {
+            $label = (string)$iface->descr !== '' ? (string)$iface->descr : $ifDev;
+            $state = isset($knownPgw[$ifDev]) ? "connection {$knownPgw[$ifDev]} is disabled" : "its connection was deleted";
+            $warnings[] = "{$ifkey} ({$label}): {$state}. The interface stays assigned but disabled, "
+                . "so it keeps its key and gateway name; until it is enabled again nothing can leave through it. "
+                . "Still used by: " . implode('; ', $refs);
         }
     }
     foreach ($toRemove as $iface) {
@@ -638,6 +667,90 @@ function proxygateway_sync_interfaces()
     if ($changed) {
         $configObj->save();
     }
+    foreach ($warnings as $w) {
+        syslog(LOG_WARNING, "proxygateway: {$w}");
+    }
+    return $warnings;
+}
+
+/**
+ * Where else config.xml uses an interface: its key (optN) or the name of its
+ * dynamic gateway (core names it strtoupper("<descr>_GW"), e.g. FRP_GW).
+ * The assignment itself and Proxy Gateway's own PROXYGW_ gateways (removed
+ * with the connection) do not count.
+ *
+ * @param SimpleXMLElement $xml config root
+ * @param string $ifkey interface key, e.g. opt7
+ * @return array "path (n×)" per place that refers to it
+ */
+function proxygateway_interface_references($xml, $ifkey)
+{
+    if (!isset($xml->interfaces->{$ifkey})) {
+        return [];
+    }
+    $own = dom_import_simplexml($xml->interfaces->{$ifkey});
+    $descr = (string)$xml->interfaces->{$ifkey}->descr;
+    $base = $descr !== '' ? $descr : $ifkey;
+    $names = [$ifkey, strtoupper("{$base}_GW"), strtoupper("{$base}_GW6")];
+    $pattern = '/(^|[\s,;|])(' . implode('|', array_map(function ($n) {
+        return preg_quote($n, '/');
+    }, $names)) . ')($|[\s,;|])/';
+
+    $xp = new \DOMXPath($own->ownerDocument);
+    $found = [];
+    foreach ($xp->query('//text()') as $text) {
+        $value = trim($text->nodeValue);
+        if ($value === '' || strlen($value) > 8192 || !preg_match($pattern, $value)) {
+            continue;
+        }
+        $path = [];
+        $skip = false;
+        for ($node = $text->parentNode; $node instanceof \DOMElement; $node = $node->parentNode) {
+            if ($node->isSameNode($own)) {
+                $skip = true;
+                break;
+            }
+            if ($node->nodeName === 'gateway_item') {
+                foreach ($node->childNodes as $child) {
+                    if ($child->nodeName === 'name' && strpos($child->nodeValue, 'PROXYGW_') === 0) {
+                        $skip = true;
+                    }
+                }
+            }
+            array_unshift($path, $node->nodeName);
+        }
+        if ($skip) {
+            continue;
+        }
+        array_shift($path);   // the <opnsense> root
+        $key = implode('/', $path);
+        $found[$key] = ($found[$key] ?? 0) + 1;
+    }
+    $out = [];
+    foreach ($found as $where => $count) {
+        $out[] = $count > 1 ? "{$where} ({$count}x)" : $where;
+    }
+    return $out;
+}
+
+/**
+ * The interface key of a connection's pgw_* device and what still uses it.
+ *
+ * @param string $name connection name
+ * @return array [interface key or null, references]
+ */
+function proxygateway_connection_references($name)
+{
+    $xml = \OPNsense\Core\Config::getInstance()->object();
+    if (!isset($xml->interfaces)) {
+        return [null, []];
+    }
+    foreach ($xml->interfaces->children() as $ifkey => $iface) {
+        if ((string)$iface->{'if'} === "pgw_{$name}") {
+            return [$ifkey, proxygateway_interface_references($xml, $ifkey)];
+        }
+    }
+    return [null, []];
 }
 
 /**

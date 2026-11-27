@@ -48,7 +48,7 @@ src/
 │   │   ├── gateway_health.php          # gateway list + dpinger status for plugin_health.py
 │   │   ├── watchdog.py                  # Periodic monitoring: PID check, health check, failover
 │   │   ├── gateway_force_down.php       # Set force_down on the plugin's own PROXYGW_ gateway (config.xml)
-│   │   ├── pgwrepair.py                 # Gateway resolution by device, repair state/cap, local proxy service, syslog
+│   │   ├── pgwrepair.py                 # Gateway resolution by device, repair state/cap, upstream description, syslog
 │   │   ├── restartconn.sh               # configctl proxygateway restartconn NAME (healthcheck "fix" action)
 │   │   ├── speedtest.sh                # Run speed test through proxy
 │   │   ├── speedtest_cron.sh           # Cron wrapper for speed test
@@ -93,8 +93,14 @@ src/
   route-pins: temporary `route add -host <target ip> <peer>` for the one request (never replaces an
   existing specific route). Unpinnable → proxy-direct fallback with `verified=0` (= unverified, not ok)
 - Repair (watchdog.check_repair): N failed *verified* tunnel probes → SOCKS step; proxy up/unknown →
-  restart tun2socks (restart_tunnel); proxy down and a known proxy daemon on this router → `service X
-  restart`. Backoff 2/4/8 min, cap 3/hour (pgwrepair). State: `<name>.repair`
+  restart tun2socks (restart_tunnel); proxy down → reported only (last_result=upstream_down,
+  pgwrepair.upstream_detail), never `service X restart`: the proxy is not this plugin's. Backoff
+  2/4/8 min, cap 3/hour (pgwrepair). State: `<name>.repair`
+- Boundaries: the watchdog does not look at App Router's pf rules (App Router's healthcheck does).
+  A disabled connection keeps its optN assignment (disabled) so rules and the dynamic gateway
+  (<DESCR>_GW, e.g. FRP_GW) keep working when it is enabled again; a deleted connection's assignment
+  is removed only if proxygateway_interface_references() finds nothing using it. Uninstall never
+  edits config.xml, it lists leftovers (leftovers.php / +POST_DEINSTALL).
 - Watchdog events that matter go to syslog via pgwrepair.event() at ≥ notice — the OPNsense catch-all
   system log drops info-level lines from programs without their own log filter
 

@@ -1393,8 +1393,9 @@ is down is done with the gateway force-down plus standard OPNsense settings.
    plugin's own `PROXYGW_` gateway is forced down: if you created your own
    gateway on the connection's interface, the watchdog leaves it alone
    (force-down would be a persistent config.xml change) and repairs the
-   tunnel instead (restart tun2socks, or the local proxy daemon; at most 3
-   restarts per hour). Repair steps are logged to the watchdog log and to the
+   tunnel instead (restart tun2socks, at most 3 restarts per hour). If the
+   proxy itself does not answer, the watchdog only reports it: the proxy
+   (e.g. sslocal) is not part of Proxy Gateway and is not restarted by it. Repair steps are logged to the watchdog log and to the
    system log (`/var/log/system/`, program `proxygateway`)
 3. What OPNsense does with a rule whose gateway is down depends on the firewall
    settings below

@@ -18,8 +18,9 @@ Tunnel repair: the health probe goes through the tunnel (route-pinned when
 pf would leak it, see pgwhealth.py). After N (failoverThreshold) consecutive
 failed tunnel probes the chain is restarted, least disruptive part first: if
 the proxy itself still answers directly (the SOCKS step), only tun2socks is
-restarted; if the SOCKS step fails too and the proxy is a known proxy daemon
-on this router (e.g. sslocal), that service is restarted. Restarts back off
+restarted; if the SOCKS step fails too, the proxy itself is down. The proxy is
+not Proxy Gateway's (e.g. sslocal belongs to its own package), so it is only
+reported (watchdog log, syslog, healthcheck), never restarted. Restarts back off
 (2, 4, 8 min) and are capped at REPAIR_MAX_PER_HOUR per connection. Every
 step goes to watchdog.log and to syslog (ident proxygateway, >= notice, so it
 lands in /var/log/system/).
@@ -655,8 +656,9 @@ def check_repair(name, conn, result, failover_state=None, now=None, rundir=None)
     """Count failed tunnel probes and restart the chain after N of them.
 
     Order: SOCKS step (direct probe of the active proxy) decides what to
-    restart — tun2socks when the proxy answers (or cannot be probed), the
-    local proxy daemon when it does not. Backoff and an hourly cap apply.
+    restart — tun2socks when the proxy answers (or cannot be probed); when it
+    does not, the proxy is reported as down and nothing is restarted (it is not
+    ours, and restarting tun2socks would not help). Backoff and an hourly cap apply.
     Returns the repair state.
     """
     rundir = rundir or RUNDIR
@@ -712,23 +714,16 @@ def _repair(name, conn, state, failover_state, now, emit):
             ok = check_connection(name)
         pgwrepair.note_restart(state, now, "tun2socks", ok, f"socks step {socks}")
     else:
-        svc, detail = pgwrepair.local_proxy_service(server, port)
-        if not svc:
-            emit(logging.WARNING, "%s: proxy does not answer directly and cannot be restarted here (%s); "
-                 "restarting tun2socks will not help, waiting", name, detail)
-            # back off without using up the hourly cap
-            state["next_allowed"] = now + pgwrepair.REPAIR_BACKOFF_BASE
-            state["tunnel_failures"] = 0
-            state["last_action"], state["last_result"], state["last_at"] = "none", "upstream_down", now
-            state["last_reason"] = detail
-            return
-        if DRY_RUN:
-            log.info("[dry-run] %s: would restart local proxy service %s", name, svc)
-            return
-        emit(logging.INFO, "%s: repair step 2: SOCKS step failed, restarting local proxy service %s (%s)",
-             name, svc, detail)
-        ok = pgwrepair.restart_service(svc)
-        pgwrepair.note_restart(state, now, f"service:{svc}", ok, "socks step down")
+        detail = pgwrepair.upstream_detail(server, port)
+        emit(logging.WARNING, "%s: the %s proxy does not answer (%s); it is not managed by Proxy Gateway, "
+             "so it is not restarted here, and restarting tun2socks would not help. Waiting",
+             name, "backup" if backup else "primary", detail)
+        # back off without using up the hourly cap
+        state["next_allowed"] = now + pgwrepair.REPAIR_BACKOFF_BASE
+        state["tunnel_failures"] = 0
+        state["last_action"], state["last_result"], state["last_at"] = "none", "upstream_down", now
+        state["last_reason"] = detail
+        return
     recent = len(pgwrepair.recent_restarts(state, now))
     emit(logging.INFO if state["last_result"] == "ok" else logging.ERROR,
          "%s: repair %s %s (%d/%d this hour, next repair not before +%ds)", name, state["last_action"],
