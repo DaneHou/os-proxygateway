@@ -20,4 +20,8 @@ sysrc -x proxygateway_enable 2>/dev/null || true
 # Reload configd
 /usr/local/sbin/configctl configd actions 2>/dev/null || true
 
+# Drop the cron jobs (and any /etc/cron.d file from versions before 1.7.0)
+rm -f /etc/cron.d/proxygateway
+/usr/local/sbin/configctl cron restart 2>/dev/null || true
+
 echo "os-proxygateway has been removed."

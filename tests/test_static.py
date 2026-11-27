@@ -82,3 +82,22 @@ def test_tunnel_address_is_never_natted_on_upstream_interfaces():
     assert "registerSNatRule(50" in inc and "\x27nonat\x27       => true" in inc
     assert "\x27source\x27      => [\x27network\x27 => $intf_id]" in inc
     assert "function proxygateway_upstream_interfaces()" in inc and "pgw_" in inc
+
+
+def test_cron_jobs_come_from_the_plugin_hook():
+    # one cron mechanism: OPNsense's _cron() hook, no file in /etc/cron.d
+    inc = read(INC)
+    assert "function proxygateway_cron()" in inc
+    assert "'/usr/local/sbin/configctl proxygateway watchdog 2>&1', '*'" in inc
+    assert "'/usr/local/sbin/configctl proxygateway speedtestcron 2>&1', '*/5'" in inc
+    assert not os.path.exists(os.path.join(SRC, 'etc', 'cron.d', 'proxygateway'))
+    makefile = read(os.path.join(ROOT, 'Makefile'))
+    assert 'cp src/etc/cron.d' not in makefile
+    # upgrades drop the old file so the jobs do not run twice
+    for path in (os.path.join(ROOT, 'Makefile'), os.path.join(ROOT, 'pkg', '+POST_INSTALL')):
+        assert 'rm -f $(DESTDIR)/etc/cron.d/proxygateway' in read(path) or \
+            'rm -f /etc/cron.d/proxygateway' in read(path)
+    # Apply rewrites the crontab when enabling/disabling changed the jobs
+    ctrl = read(os.path.join(SRC, 'opnsense', 'mvc', 'app', 'controllers', 'OPNsense',
+                             'ProxyGateway', 'Api', 'ServiceController.php'))
+    assert "proxygateway_cron_stale($mdl)" in ctrl and "configdRun('cron restart')" in ctrl

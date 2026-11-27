@@ -17,9 +17,8 @@ os-proxygateway is an OPNsense plugin that converts SOCKS5, HTTP CONNECT and Sha
 ```
 src/
 ├── etc/
-│   ├── cron.d/proxygateway              # Cron jobs (watchdog, speedtest)
 │   ├── inc/plugins.inc.d/
-│   │   └── proxygateway.inc             # Core PHP plugin: firewall rules, gateway sync, desired.json generation
+│   │   └── proxygateway.inc             # Core PHP plugin: firewall rules, gateway sync, desired.json generation, cron jobs (watchdog, speedtest)
 │   ├── newsyslog.conf.d/               # Log rotation
 │   └── rc.d/                            # Service script
 ├── opnsense/

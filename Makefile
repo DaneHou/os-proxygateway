@@ -1,5 +1,5 @@
 PLUGIN_NAME=	os-proxygateway
-PLUGIN_VERSION=	1.6.3
+PLUGIN_VERSION=	1.7.0
 PLUGIN_ARCH?=	freebsd-amd64
 
 TUN2SOCKS_VERSION=	2.6.0
@@ -89,9 +89,10 @@ install-plugin:
 	@cp src/opnsense/scripts/OPNsense/ProxyGateway/lib/*.sh $(SCRIPTS_DIR)/lib/
 	@chmod +x $(SCRIPTS_DIR)/*.sh $(SCRIPTS_DIR)/*.py $(SCRIPTS_DIR)/*.php
 
-	# Cron (watchdog)
-	@mkdir -p $(DESTDIR)/etc/cron.d
-	@cp src/etc/cron.d/proxygateway $(DESTDIR)/etc/cron.d/
+	# Cron: the watchdog and speed test jobs come from proxygateway_cron()
+	# (activate runs "cron restart"). Remove the file older versions put in
+	# /etc/cron.d, or both would run.
+	@rm -f $(DESTDIR)/etc/cron.d/proxygateway
 
 	# Log rotation
 	@mkdir -p $(DESTDIR)/etc/newsyslog.conf.d
@@ -156,6 +157,8 @@ activate:
 	@php -l $(MVC_DIR)/models/OPNsense/ProxyGateway/ProxyGateway.php 2>&1 || true
 	# Restart configd to pick up new actions
 	@service configd restart 2>/dev/null || true
+	# Rewrite root's crontab from the plugin cron hooks
+	@configctl cron restart 2>/dev/null || true
 	# Restart web GUI to flush opcache and pick up new menu/controllers
 	@configctl webgui restart 2>/dev/null || service php_fpm restart 2>/dev/null || true
 	# Verify plugin registration
@@ -186,6 +189,7 @@ uninstall:
 	@rm -f /tmp/opnsense_menu_cache.xml 2>/dev/null || true
 	@sysrc -x proxygateway_enable 2>/dev/null || true
 	@$(PREFIX)/sbin/configctl configd actions 2>/dev/null || true
+	@$(PREFIX)/sbin/configctl cron restart 2>/dev/null || true
 	@echo ">>> Plugin removed. tun2socks binary left in place."
 	@echo ">>> To also remove tun2socks: rm $(BIN_DIR)/tun2socks"
 

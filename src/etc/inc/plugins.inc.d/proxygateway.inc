@@ -844,3 +844,62 @@ function proxygateway_syslog()
         'proxygateway' => ['facility' => ['proxygateway']],
     ];
 }
+
+/**
+ * Whether the watchdog and speed test cron jobs should exist: the plugin and
+ * at least one connection are enabled. The scripts still gate themselves on
+ * their flag files (watchdog.enabled, speedtest.enabled).
+ */
+function proxygateway_cron_wanted($mdl = null)
+{
+    if ($mdl === null) {
+        $mdl = new \OPNsense\ProxyGateway\ProxyGateway();
+    }
+    if ((string)$mdl->general->enabled !== '1') {
+        return false;
+    }
+    foreach ($mdl->connections->connection->iterateItems() as $conn) {
+        if (!empty((string)$conn->enabled)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Cron jobs, written into root's crontab by OPNsense with every other
+ * plugin's jobs. This replaces the old /etc/cron.d/proxygateway file, which
+ * ran outside OPNsense's cron model.
+ */
+function proxygateway_cron()
+{
+    $jobs = [];
+    if (!proxygateway_cron_wanted()) {
+        return $jobs;
+    }
+    $jobs[] = [
+        'description' => 'Proxy Gateway watchdog',
+        'autocron' => ['/usr/local/sbin/configctl proxygateway watchdog 2>&1', '*'],
+    ];
+    $jobs[] = [
+        'description' => 'Proxy Gateway speed test',
+        'autocron' => ['/usr/local/sbin/configctl proxygateway speedtestcron 2>&1', '*/5'],
+    ];
+    return $jobs;
+}
+
+/**
+ * True when root's crontab disagrees with proxygateway_cron_wanted(), for
+ * example right after the plugin or its first connection was enabled.
+ * OPNsense only rewrites the crontab on "cron restart" or at boot, so Apply
+ * calls this and runs "cron restart" when it returns true.
+ */
+function proxygateway_cron_stale($mdl = null)
+{
+    $tab = @file_get_contents('/var/cron/tabs/root');
+    if ($tab === false) {
+        return false;
+    }
+    $present = strpos($tab, 'configctl proxygateway watchdog') !== false;
+    return $present !== proxygateway_cron_wanted($mdl);
+}

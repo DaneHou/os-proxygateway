@@ -18,8 +18,14 @@ if [ -x /usr/local/opnsense/mvc/script/run_migrations.php ]; then
     /usr/local/opnsense/mvc/script/run_migrations.php
 fi
 
-# Enable the service
+# Enable the service. Keep this: configd's "proxygateway start/stop/restart"
+# call the rc.d script, and rc.subr skips start unless proxygateway_enable=YES.
 sysrc proxygateway_enable=YES 2>/dev/null || true
+
+# Cron jobs now come from proxygateway_cron(); drop the old /etc/cron.d file
+# so they do not run twice, then rewrite root's crontab.
+rm -f /etc/cron.d/proxygateway
+/usr/local/sbin/configctl cron restart 2>/dev/null || true
 
 # Register interface group
 /usr/local/sbin/configctl interface invoke registration 2>/dev/null || true

@@ -3,6 +3,37 @@
 Plugin versions (Makefile `PLUGIN_VERSION`) are listed here. The MVC model
 schema has its own version (`ProxyGateway.xml`), noted where it changed.
 
+## [1.7.0] - 2026-11-26
+
+### Changed
+
+- **Cron jobs move into OPNsense's cron model.** The watchdog (every minute) and speed test (every 5 minutes) come from `proxygateway_cron()` instead of `/etc/cron.d/proxygateway`. They are registered only while the plugin and at least one connection are enabled; the scripts still gate on their flag files. Apply runs `cron restart` when enabling or disabling changed what root's crontab should hold. Install and deinstall remove the old `/etc/cron.d` file so nothing runs twice.
+
+## [1.6.3] - 2026-11-26
+
+### Fixed
+
+- **Route-to check counts only pass rules.** App Router loads a block rule behind each route; those have no `route-to` by design and no longer trigger a filter reload.
+
+## [1.6.2] - 2026-11-26
+
+### Fixed
+
+- **Route-to reload is rate-limited.** Core leaves `route-to` out on purpose while the rules' gateway is down, so `watchdog.sh` reloaded the whole filter (with a DNS hiccup for every client) once a minute during an outage. It now retries at most every 15 minutes.
+- **Stale legacy gateways are removed.** Older versions wrote `PROXYGW_<NAME>` into the legacy `<gateways>` section. Reconfigure removes such entries unless the connection is still enabled or something refers to the gateway.
+
+## [1.6.1] - 2026-11-21
+
+### Fixed
+
+- **Path predictor:** a `nat-anchor` line is not a NAT rule; it made the tunnel path always report `nat_leak`.
+
+## [1.6.0] - 2026-11-21
+
+### Fixed
+
+- **Never NAT the tunnel address out of WAN.** Automatic outbound NAT also covers the `pgw_*` network. A `no nat` rule per upstream interface keeps tunnel-sourced traffic off WAN; the watchdog probe no longer needs route pinning.
+
 ## [1.5.0] - 2026-11-21
 
 ### Fixed

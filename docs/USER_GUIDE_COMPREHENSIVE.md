@@ -1,6 +1,6 @@
 # Comprehensive User Guide: OS Proxy Gateway
 
-**Version:** 1.2.0
+**Version:** 1.2.0 (written for 1.2.0; plugin is now 1.7.0, see [CHANGELOG](../CHANGELOG.md) for later changes)
 **Last Updated:** 2026-09-24
 **Target Audience:** OPNsense administrators
 

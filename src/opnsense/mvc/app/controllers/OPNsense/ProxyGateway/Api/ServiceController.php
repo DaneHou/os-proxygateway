@@ -78,6 +78,12 @@ class ServiceController extends ApiMutableServiceControllerBase
             // Reconfigure routes to pick up gateways with the updated IPs.
             $backend->configdRun('interface routes reconfigure');
 
+            // The watchdog and speed test jobs come from proxygateway_cron();
+            // rewrite root's crontab when enabling or disabling changed them.
+            if (proxygateway_cron_stale($mdl)) {
+                $backend->configdRun('cron restart');
+            }
+
             $result = ['status' => 'ok', 'response' => $response];
         }
 
